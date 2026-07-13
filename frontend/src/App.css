@@ -1,0 +1,27 @@
+/* ============================================
+   App.css — Layout shell styles
+   ============================================ */
+
+.app-layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+.app-main {
+  flex: 1;
+  margin-left: var(--sidebar-width);
+  transition: margin-left var(--transition-base);
+}
+
+.app-content {
+  padding: var(--space-8);
+  padding-top: calc(var(--header-height) + var(--space-8));
+  min-height: 100vh;
+}
+
+/* Responsive: collapse sidebar on small screens */
+@media (max-width: 768px) {
+  .app-main {
+    margin-left: 0;
+  }
+}
