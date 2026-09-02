@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "TRACE Database",
+      "Group": "Servers",
+      "Host": "db",
+      "Port": 5432,
+      "MaintenanceDB": "trace_db",
+      "Username": "trace_user",
+      "SSLMode": "prefer",
+      "PassFile": "/pgpass"
+    }
+  }
+}

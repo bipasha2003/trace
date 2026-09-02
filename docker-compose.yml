@@ -115,9 +115,59 @@ services:
       - ./frontend:/app
       - /app/node_modules
     environment:
-      VITE_API_BASE_URL: http://api:8000
+      VITE_API_TARGET: http://api:8000
     depends_on:
       - api
 
+  # ── pgAdmin 4 (Auto-configured) ────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: trace_pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@trace.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin123}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - ./pgadmin/servers.json:/pgadmin4/servers.json:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ── Mailpit (SMTP Catch-All + Web UI) ──────────────────────
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: trace_mailpit
+    restart: unless-stopped
+    ports:
+      - "${MAILPIT_SMTP_PORT:-1025}:1025"
+      - "${MAILPIT_UI_PORT:-8025}:8025"
+    volumes:
+      - mailpit_data:/data
+    environment:
+      MP_DATABASE: /data/mailpit.db
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+
+  # ── MinIO (S3-Compatible Object Storage) ───────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: trace_minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-trace_minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-trace_minio_secret}
+
 volumes:
   postgres_data:
+  mailpit_data:
+  minio_data:

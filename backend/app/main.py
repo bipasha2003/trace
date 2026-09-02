@@ -5,6 +5,8 @@ Entry point for the TRACE backend application.
 
 import logging
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from app.api.v1.router import router as v1_router
@@ -18,6 +20,30 @@ logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
 )
+logger = logging.getLogger("trace")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan — runs seeds on startup."""
+    # ── Startup: auto-migrate tables and seed reference data ─────
+    from app.database import engine, Base
+    from app.models import __init__  # noqa: F401 — ensure all models are imported
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    logger.info("Database tables ensured.")
+
+    try:
+        from app.seeds import run_seeds
+        await run_seeds()
+    except Exception as e:
+        logger.warning(f"Seed script encountered an issue: {e}")
+
+    yield
+
+    # ── Shutdown ─────────────────────────────────────────────────
+    logger.info("TRACE shutting down.")
 
 
 def create_app() -> FastAPI:
@@ -33,6 +59,7 @@ def create_app() -> FastAPI:
         ),
         docs_url="/docs",
         redoc_url="/redoc",
+        lifespan=lifespan,
     )
 
     # ── Middleware ────────────────────────────────────────────────

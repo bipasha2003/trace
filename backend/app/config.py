@@ -38,6 +38,23 @@ class Settings(BaseSettings):
     # ── Geo-Fence ────────────────────────────────────────────────
     DEFAULT_GEO_FENCE_RADIUS_METERS: int = 200
 
+    # ── MinIO (S3-Compatible Storage) ────────────────────────────
+    MINIO_ENDPOINT: str = "localhost:9000"
+    MINIO_ACCESS_KEY: str = "trace_minio"
+    MINIO_SECRET_KEY: str = "trace_minio_secret"
+    MINIO_BUCKET: str = "trace-uploads"
+    MINIO_SECURE: bool = False
+
+    # ── Mailpit (SMTP) ──────────────────────────────────────────
+    SMTP_HOST: str = "localhost"
+    SMTP_PORT: int = 1025
+    SMTP_FROM: str = "noreply@trace.com"
+
+    # ── OpenAI SDK (LLM) ────────────────────────────────────────
+    OPENAI_API_KEY: str = ""
+    OPENAI_BASE_URL: str = ""
+    OPENAI_MODEL: str = "gpt-4o-mini"
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

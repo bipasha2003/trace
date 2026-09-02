@@ -50,7 +50,7 @@ class User(BaseModelMixin, Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     password: Mapped[str] = mapped_column(Text, nullable=False)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    gender: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    gender: Mapped[str | None] = mapped_column(String(20), nullable=True) # enum
     dob: Mapped[date | None] = mapped_column(Date, nullable=True)
     profile_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("profiles.id"), nullable=True
@@ -58,7 +58,7 @@ class User(BaseModelMixin, Base):
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     status: Mapped[str] = mapped_column(
         String(20), default="Active", nullable=False
-    )  # Active, Inactive, Blocked, Password Changed
+    )  # Active, Inactive, Blocked, Password Changed #enum
 
     # ── Relationships ────────────────────────────────────────────
     profile: Mapped[Profile | None] = relationship(

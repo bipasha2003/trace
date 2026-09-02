@@ -64,6 +64,22 @@ class Task(BaseModelMixin, Base):
         String(20), default="Pending", nullable=False
     )  # Pending, WIP, Review, Completed, Failed, Cancelled, Delayed
 
+    project_manager_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("employees.id"), nullable=True
+    )
+    team_lead_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("employees.id"), nullable=True
+    )
+    task_level_role: Mapped[str] = mapped_column(
+        String(50), default="Member", nullable=False
+    )  # Project Manager, Team Lead, Member
+    github_issue_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    github_issue_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    commit_verified: Mapped[bool] = mapped_column(default=False, nullable=False)
+    commit_hash: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    llm_verification_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tree_path: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
     # ── Relationships ────────────────────────────────────────────
     task_type: Mapped[TaskType | None] = relationship("TaskType", back_populates="tasks")
     assignee: Mapped["Employee | None"] = relationship(
@@ -71,6 +87,12 @@ class Task(BaseModelMixin, Base):
     )
     assigner: Mapped["Employee | None"] = relationship(
         "Employee", foreign_keys=[assigned_by], back_populates="created_tasks"
+    )
+    project_manager: Mapped["Employee | None"] = relationship(
+        "Employee", foreign_keys=[project_manager_id]
+    )
+    team_lead: Mapped["Employee | None"] = relationship(
+        "Employee", foreign_keys=[team_lead_id]
     )
     parent_task: Mapped["Task | None"] = relationship(
         "Task", remote_side="Task.id", back_populates="sub_tasks"
@@ -162,6 +184,49 @@ class TaskTimeLog(BaseModelMixin, Base):
 
     def __repr__(self) -> str:
         return f"<TaskTimeLog(id={self.id}, task_id={self.task_id}, active_min={self.active_minutes})>"
+
+
+class ProjectGroup(BaseModelMixin, Base):
+    """
+    project_groups table — auto-created chat groups based on Task Tree hierarchy.
+    """
+
+    __tablename__ = "project_groups"
+
+    task_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tasks.id"), nullable=False
+    )
+    group_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # ── Relationships ────────────────────────────────────────────
+    task: Mapped[Task] = relationship("Task")
+    messages: Mapped[list["ProjectGroupMessage"]] = relationship(
+        "ProjectGroupMessage", back_populates="group", cascade="all, delete-orphan"
+    )
+
+
+class ProjectGroupMessage(BaseModelMixin, Base):
+    """
+    project_group_messages table — chat messages with tree-based tagging rule enforcement.
+    """
+
+    __tablename__ = "project_group_messages"
+
+    group_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("project_groups.id"), nullable=False
+    )
+    sender_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("employees.id"), nullable=False
+    )
+    sender_name: Mapped[str] = mapped_column(String(150), nullable=False)
+    sender_role: Mapped[str] = mapped_column(String(50), default="Member", nullable=False)  # Project Manager, Team Lead, Member
+    tagged_role: Mapped[str | None] = mapped_column(String(50), nullable=True)  # @ProjectManager, @TeamLead, @ParentTeam, @Members
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # ── Relationships ────────────────────────────────────────────
+    group: Mapped[ProjectGroup] = relationship("ProjectGroup", back_populates="messages")
+    sender: Mapped["Employee"] = relationship("Employee")
 
 
 # Forward reference import

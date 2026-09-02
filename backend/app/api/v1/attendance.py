@@ -19,7 +19,7 @@ router = APIRouter(prefix="/attendance", tags=["Attendance"])
 
 
 async def _get_employee(user: User, db: AsyncSession) -> Employee:
-    """Resolve the Employee record for the current user via a proper async query."""
+    """Resolve the Employee record for the current user, or auto-create if missing."""
     result = await db.execute(
         select(Employee).where(
             Employee.user_id == user.id, Employee.deleted_at.is_(None)
@@ -27,7 +27,14 @@ async def _get_employee(user: User, db: AsyncSession) -> Employee:
     )
     employee = result.scalar_one_or_none()
     if employee is None:
-        raise NotFoundException("Employee record for this user")
+        employee = Employee(
+            user_id=user.id,
+            employee_code=f"EMP-{user.id:03d}",
+            status="Active",
+        )
+        db.add(employee)
+        await db.commit()
+        await db.refresh(employee)
     return employee
 
 

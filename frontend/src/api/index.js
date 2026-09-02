@@ -4,3 +4,9 @@
  */
 
 export { default as api } from './client'
+export { authApi } from './auth'
+export { employeesApi } from './employees'
+export { attendanceApi } from './attendance'
+export { tasksApi } from './tasks'
+export { productivityApi } from './productivity'
+export { hrmsApi } from './hrms'

@@ -8,15 +8,18 @@ Usage:
 """
 
 import asyncio
+import logging
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_factory
 from app.models.attendance import TimeZone
-from app.models.employee import Department, WorkSchedule
+from app.models.employee import Department, Employee, WorkSchedule
 from app.models.task import TaskType
-from app.models.user import Role
+from app.models.user import Profile, Role, User, UserRole
+
+logger = logging.getLogger("trace.seeds")
 
 
 # ── Reference Data ───────────────────────────────────────────────
@@ -55,6 +58,16 @@ TIME_ZONES = [
     {"timezone_name": "Asia/Tokyo", "utc_offset": "+09:00"},
     {"timezone_name": "Australia/Sydney", "utc_offset": "+11:00"},
 ]
+
+# Default admin user credentials
+DEFAULT_ADMIN = {
+    "name": "Admin User",
+    "username": "admin",
+    "email": "admin@trace.com",
+    "password": "Admin@123",
+    "phone": "+91-9876543210",
+    "gender": "Other",
+}
 
 
 # ── Seed Functions ───────────────────────────────────────────────
@@ -135,6 +148,143 @@ async def seed_time_zones(db: AsyncSession) -> None:
             print(f"  ⏭️  TimeZone: {tz['timezone_name']} (exists)")
 
 
+async def seed_admin_user(db: AsyncSession) -> None:
+    """Create the default admin user with an employee record."""
+    from datetime import date
+
+    from app.core.security import hash_password
+
+    # Check if admin already exists
+    existing = await db.execute(
+        select(User).where(User.email == DEFAULT_ADMIN["email"])
+    )
+    if existing.scalar_one_or_none() is not None:
+        print(f"  ⏭️  Admin user: {DEFAULT_ADMIN['email']} (exists)")
+        return
+
+    # Get admin role
+    role_result = await db.execute(
+        select(Role).where(Role.role_name == "Admin")
+    )
+    admin_role = role_result.scalar_one_or_none()
+    if admin_role is None:
+        print("  ❌ Admin role not found — skipping admin user seed")
+        return
+
+    # Get a department for the employee record
+    dept_result = await db.execute(
+        select(Department).where(Department.name == "Development")
+    )
+    dept = dept_result.scalar_one_or_none()
+
+    # Get a work schedule
+    ws_result = await db.execute(
+        select(WorkSchedule).where(WorkSchedule.schedule_name == "Standard (9-6)")
+    )
+    work_schedule = ws_result.scalar_one_or_none()
+
+    # Create profile
+    profile = Profile()
+    db.add(profile)
+    await db.flush()
+
+    # Create user
+    user = User(
+        name=DEFAULT_ADMIN["name"],
+        username=DEFAULT_ADMIN["username"],
+        email=DEFAULT_ADMIN["email"],
+        password=hash_password(DEFAULT_ADMIN["password"]),
+        phone=DEFAULT_ADMIN["phone"],
+        gender=DEFAULT_ADMIN["gender"],
+        profile_id=profile.id,
+        is_verified=True,
+        status="Active",
+    )
+    db.add(user)
+    await db.flush()
+
+    # Assign admin role
+    user_role = UserRole(user_id=user.id, role_id=admin_role.id)
+    db.add(user_role)
+    await db.flush()
+
+    # Create employee record so attendance/tasks work
+    employee = Employee(
+        user_id=user.id,
+        employee_code="TRACE-001",
+        department_id=dept.id if dept else None,
+        work_schedule_id=work_schedule.id if work_schedule else None,
+        joining_date=date.today(),
+        status="Active",
+    )
+    db.add(employee)
+    await db.flush()
+
+    print(f"  ✅ Admin user: {DEFAULT_ADMIN['email']} (password: {DEFAULT_ADMIN['password']})")
+    print(f"  ✅ Employee record: TRACE-001")
+
+
+async def seed_sample_tree_and_hrms(db: AsyncSession) -> None:
+    """Seed initial nested task hierarchy (Project Manager -> Team Lead -> Ground Member) and Holidays."""
+    from datetime import date
+    from app.models.task import Task
+    from app.models.hrms import Holiday, Leave
+
+    # Seed Holiday
+    h_exist = await db.execute(select(Holiday).where(Holiday.name == "New Year's Day"))
+    if not h_exist.scalar_one_or_none():
+        db.add(Holiday(name="New Year's Day", holiday_date=date(2026, 1, 1), description="National holiday", type="Public"))
+        db.add(Holiday(name="Independence Day", holiday_date=date(2026, 8, 15), description="National holiday", type="Public"))
+        print("  ✅ Holidays seeded")
+
+    # Check root task
+    t_exist = await db.execute(select(Task).where(Task.title == "TRACE Core Engine (Project 1)"))
+    if not t_exist.scalar_one_or_none():
+        admin_emp = (await db.execute(select(Employee).where(Employee.employee_code == "TRACE-001"))).scalar_one_or_none()
+        emp_id = admin_emp.id if admin_emp else None
+
+        # Task 1 (Project Manager Level)
+        task1 = Task(
+            title="TRACE Core Engine (Project 1)",
+            description="Parent project for full TRACE system setup.",
+            task_level_role="Project Manager",
+            project_manager_id=emp_id,
+            status="WIP",
+            priority="Critical",
+        )
+        db.add(task1)
+        await db.flush()
+
+        # Task 1.1 (Team Lead Level)
+        task1_1 = Task(
+            title="Authentication & Employee Tree Subsystem",
+            description="Team 1 sub-project for HRMS & tree tasks.",
+            parent_task_id=task1.id,
+            task_level_role="Team Lead",
+            team_lead_id=emp_id,
+            status="WIP",
+            priority="High",
+        )
+        db.add(task1_1)
+        await db.flush()
+
+        # Task 1.1.1 (Ground Member Level)
+        task1_1_1 = Task(
+            title="Ground Task: Integrate GitHub Issues API",
+            description="Ground level work assigned to developer member.",
+            parent_task_id=task1_1.id,
+            task_level_role="Member",
+            assigned_to=emp_id,
+            github_issue_id="#GH-0101",
+            github_issue_url="https://github.com/trace-org/trace-app/issues/101",
+            status="Pending",
+            priority="Medium",
+        )
+        db.add(task1_1_1)
+        await db.flush()
+        print("  ✅ Infinite Task Tree hierarchy seeded (Project Manager -> Team Lead -> Member)")
+
+
 async def run_seeds() -> None:
     """Execute all seed functions."""
     print("\n🌱 TRACE Database Seeding\n" + "=" * 40)
@@ -155,6 +305,12 @@ async def run_seeds() -> None:
 
             print("\n🌍 Time Zones:")
             await seed_time_zones(db)
+
+            print("\n👤 Admin User:")
+            await seed_admin_user(db)
+
+            print("\n🌳 Task Tree & HRMS Data:")
+            await seed_sample_tree_and_hrms(db)
 
             await db.commit()
             print("\n" + "=" * 40)

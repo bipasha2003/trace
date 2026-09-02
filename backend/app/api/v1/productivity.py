@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.responses import HTMLResponse
 
 from app.core.permissions import require_manager_or_admin
+from app.dependencies import get_current_user
 from app.database import get_db
 from app.models.user import User
 from app.models.employee import Employee
@@ -151,11 +152,11 @@ async def weekly_summary(
 @router.get(
     "/reports/attendance-summary",
     summary="Daily attendance summary",
-    description="Admin/Manager only. Defaults to today.",
+    description="Defaults to today.",
 )
 async def attendance_summary(
     target_date: date | None = None,
-    current_user: User = Depends(require_manager_or_admin),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     service = ReportService(db)
@@ -186,10 +187,10 @@ async def weekly_report_html(
 @router.get(
     "/dashboard/stats",
     summary="Admin dashboard statistics",
-    description="Aggregated system-wide metrics for the admin dashboard. Admin/Manager only.",
+    description="Aggregated system-wide metrics for the dashboard.",
 )
 async def dashboard_stats(
-    current_user: User = Depends(require_manager_or_admin),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """

@@ -41,19 +41,28 @@ TRACE/
 
 ## Quick Start
 
-### With Docker (recommended)
+### Using Management Commands (Recommended)
+
+```bash
+# Start all infrastructure & application services
+./start.sh start    # or simply ./start.sh
+
+# Run database migrations
+./start.sh migrate  # or ./migrate.sh
+
+# Stop all containers and background services
+./start.sh stop     # or ./stop.sh
+
+# Check service status
+./start.sh status
+```
+
+### With Docker Compose directly
 
 ```bash
 # Start all services
 docker compose up --build
-
-# Access:
-#   Frontend  → http://localhost:5173
-#   Backend   → http://localhost:8000
-#   API Docs  → http://localhost:8000/docs
 ```
-
-### Without Docker (local dev)
 
 ```bash
 # Backend

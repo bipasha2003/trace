@@ -19,7 +19,7 @@ bcrypt==4.3.0
 
 # Background Tasks (Celery)
 celery[redis]==5.5.3
-redis==6.2.0
+redis==5.2.1
 
 # Utilities
 python-dotenv==1.1.0
@@ -32,6 +32,18 @@ pytest-asyncio==1.0.0
 
 # Email (for reporting module)
 sendgrid==6.11.0
+
+# SMTP (Mailpit / local mail)
+aiosmtplib==3.0.2
+
+# MinIO (S3-compatible storage)
+minio==7.2.15
+
+# OpenAI SDK (LLM)
+openai==1.82.0
+
+# WebSockets (FastAPI already supports, but explicit)
+websockets==15.0.1
 
 # AI/Scoring (future phases)
 # scikit-learn
