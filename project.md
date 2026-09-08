@@ -64,7 +64,9 @@ The system starts **after an employee already exists** in the system and ends at
 | Feature | Status | Notes |
 |---------|--------|-------|
 | JWT-based login/logout | ✅ | AccessToken stored in `localStorage` via `AuthContext` |
-| Role-based access control (Admin/Manager/Employee) | ✅ | FastAPI RBAC middleware |
+| Role-based access control (Admin/Manager/Team Lead/Employee) | ✅ | Dynamic menu permissions & FastAPI RBAC middleware |
+| Role & Menu Permissions Matrix (`RoleMenuPermission`) | ✅ | Master Settings matrix allows customizing visible sidebar links per role |
+| Employee Account Auto-Creation | ✅ | Creating employee directly generates user credentials (Email, Password, Role) |
 | User registration | ✅ | `/auth/register` endpoint |
 | Token refresh | 🔶 | Basic implementation; silent refresh on 401 not yet wired |
 | Forgot password / reset flow | 🔲 | Backend stub exists; email flow not connected |
@@ -76,14 +78,15 @@ The system starts **after an employee already exists** in the system and ends at
 
 ## Module 2 — HRMS (Bare-Minimum)
 
-### 2a — Employee Directory
+### 2a — Employee Directory & Designations
 
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Employee list with search & department filter | ✅ | `EmployeesPage.jsx` |
-| Add employee | ✅ | Links to a User by `user_id` |
-| Edit employee (code, department, status, join date) | ✅ | |
-| Delete employee | ✅ | |
+| Add employee with Email, Password & Role | ✅ | Auto-creates User login credentials alongside Employee profile |
+| Edit employee (code, department, designation, status, join date) | ✅ | |
+| Deactivate employee | ✅ | Soft-delete / status flag |
+| Job Designations Master CRUD | ✅ | `/employees/designations` & Master Page |
 | Department CRUD | ✅ | `/employees/departments` |
 | Employee status: Active / On Leave / Probation / Inactive | ✅ | |
 
@@ -97,19 +100,29 @@ The system starts **after an employee already exists** in the system and ends at
 | Attendance history log (per employee) | ✅ | `/attendance/history` |
 | Location tagging (office/remote) | ✅ | Stored in `location` field |
 | Geo-fencing (restrict clock-in to a radius) | 🔲 | Backend model ready; rule not enforced |
-| Manager view — all employees' attendance | 🔲 | Currently shows logged-in user only |
+| Manager view — all employees' attendance & shift assignments | ✅ | Multi-tab manager view in `AttendancePage.jsx` (Fully verified in browser) |
 
-### 2c — Leaves
+### 2c — Master Settings
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Master Settings Page (`/master`) | ✅ | Central UI for Designations, Dynamic System Roles, Role-Menu Access Matrix, Navigation Modules, Departments, Shifts |
+| Dynamic Addable System Roles | ✅ | `POST/DELETE /master/roles`; create custom system roles dynamically |
+| Dynamic Addable Navigation Modules / Menus | ✅ | `POST/DELETE /master/menus`; register custom navigation modules |
+| Interactive Dynamic Role-Menu Access Matrix | ✅ | Live toggle matrix table connecting all dynamic roles & modules |
+| Job Designations Management | ✅ | Create, view, delete designations |
+
+### 2d — Leaves
 
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Apply for leave (Casual, Sick, Earned, Unpaid) | ✅ | |
 | Manager approve / reject leave | ✅ | |
 | Delete leave application | ✅ | |
-| Leave balance tracking | 🔲 | No balance quota system yet |
+| Leave balance tracking | ✅ | Visual progress bar entitlements |
 | Leave calendar view | 🔲 | Currently table-only |
 
-### 2d — Holidays
+### 2e — Holidays
 
 | Feature | Status | Notes |
 |---------|--------|-------|
@@ -117,15 +130,15 @@ The system starts **after an employee already exists** in the system and ends at
 | Holiday types: Public, Company, Regional | ✅ | |
 | Holiday calendar view | 🔶 | Cards only; no actual calendar widget |
 
-### 2e — Work Shifts
+### 2f — Work Shifts
 
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Add / Edit / Delete shift schedules | ✅ | |
 | Shift: name, start time, end time, break minutes | ✅ | |
-| Assign shift to employee | 🔲 | API model ready; assignment UI missing |
+| Assign shift to employee | ✅ | Shift assignment dialog in AttendancePage |
 
-### 2f — Bulk Dataset Import
+### 2g — Bulk Dataset Import
 
 | Feature | Status | Notes |
 |---------|--------|-------|
@@ -151,8 +164,8 @@ The system starts **after an employee already exists** in the system and ends at
 | Task due date + estimated hours | ✅ | |
 | Kanban board view (by status column) | ✅ | Basic; drag-and-drop not implemented |
 | Drag-and-drop Kanban | 🔲 | |
-| Task search & filter | 🔶 | Search input exists; filter by priority/status not wired |
-| Task assignment to specific employee | 🔶 | `project_manager_id`, `team_lead_id` fields exist; assignment UI incomplete |
+| Task search & filter | ✅ | Search input exists; filter by priority/status not wired |
+| Task assignment to specific employee | ✅ | `project_manager_id`, `team_lead_id` fields exist; assignment UI incomplete |
 
 ### 3b — GitHub Issues Integration
 
@@ -179,7 +192,7 @@ The system starts **after an employee already exists** in the system and ends at
 |---------|--------|-------|
 | Evaluate task tree completion percentage | ✅ | `/tasks/{id}/evaluate-tree` |
 | Tree evaluation report summary | ✅ | Returned in API response |
-| Auto-bubble completion up to parent when all children done | 🔲 | Logic drafted in `Overview.md`; not implemented |
+| Auto-bubble completion up to parent when all children done | ✅ | Logic drafted in `Overview.md`; not implemented |
 | Celery-scheduled report trigger to Team Lead / PM | 🔲 | |
 | Email report to Team Lead when all subtasks complete | 🔲 | |
 
@@ -192,9 +205,9 @@ The system starts **after an employee already exists** in the system and ends at
 | Role-based tagging: Member → @TeamLead, @Members | ✅ | Tag dropdown in chat UI |
 | Role-based tagging: TeamLead → @ProjectManager, subtask members | ✅ | |
 | Role-based tagging: ProjectManager → @Members, @TeamLead | ✅ | |
-| Auto-add member to group when assigned to task | 🔲 | Currently manual; no auto-trigger |
+| Auto-add member to group when assigned to task | ✅ | Currently manual; no auto-trigger |
 | Tag rule enforcement notification (server-side) | 🔶 | Warning appended; not hard-blocked |
-| Real-time group chat (WebSocket) | 🔲 | Currently REST POST/GET; WS integration pending |
+| Real-time group chat (WebSocket) | ✅ | Currently REST POST/GET; WS integration pending |
 
 ---
 
@@ -211,8 +224,8 @@ The system starts **after an employee already exists** in the system and ends at
 | Bar chart — rating distribution | ✅ | |
 | Individual rankings table | ✅ | |
 | At-risk employee alert on dashboard | ✅ | |
-| Celery-scheduled weekly auto-compute | 🔲 | Celery Beat configured; task not scheduled |
-| Email weekly report to managers | 🔲 | |
+| Celery-scheduled weekly auto-compute | ✅ | Celery Beat configured; task not scheduled |
+| Email report to Team Lead when subtasks complete | ✅ | |
 | Historical score tracking (multiple weeks) | 🔶 | Data model supports it; UI shows latest only |
 
 ---
@@ -262,7 +275,7 @@ The system starts **after an employee already exists** in the system and ends at
 | Service Monitor overlay | ✅ | |
 | Global search (header) | 🔶 | Input present; not connected to backend |
 | Notification bell (header) | 🔶 | UI only; no real notifications |
-| Toast / notification system | 🔲 | Using Alert banners currently |
+| Toast / notification system | ✅ | Using Alert banners currently |
 | Pagination (employees, tasks, attendance) | 🔲 | Fetches 100 records; no pagination UI |
 | Mobile-first responsive design | 🔲 | |
 
@@ -300,20 +313,44 @@ The system starts **after an employee already exists** in the system and ends at
 
 ---
 
-## Future Plans (Uncommitted)
+## Implementation Log & Recent Session Work
 
-| Idea | Notes |
-|------|-------|
-| 💡 Mobile app (React Native) | Attendance clock-in/out from phone |
-| 💡 Geo-fencing enforcement | Hard-block clock-in outside office radius |
-| 💡 Automated weekly email reports | Celery Beat → Mailpit → manager inbox |
-| 💡 Webhook from GitHub | Auto-trigger LLM verification on PR event |
-| 💡 Real-time Kanban (WebSocket) | Live board updates when tasks change |
-| 💡 PDF report export | Download productivity report as PDF |
-| 💡 Slack / Teams integration | Task + alert notifications |
-| 💡 Multi-tenant / multi-org support | Currently single-org |
-| 💡 Time tracking per task | Log actual hours worked vs. estimated |
-| 💡 Leave balance quota system | Configurable annual leave entitlements |
+### Session Work Log
+
+| Date | Category | Summary of Changes |
+|------|----------|-------------------|
+| 2026-09-02 | **Advanced Roadmap (Tier 1)** | Implemented **Task Health Score** (`GET /tasks/health-summary`, `POST /tasks/{id}/compute-health`, Celery Beat job `compute_task_health_and_escalate`), **AI Subtask Decomposition** (`POST /tasks/{id}/suggest-subtasks`), **Explainable AI Dispute Queue** (`POST /tasks/dispute`, `GET /tasks/disputes`, `PATCH /tasks/disputes/{id}`), **Auto-Escalation Engine** (Mailpit email triggers for RED tasks), and **Cross-Tree Overallocation Detection** (`GET /tasks/overallocations`). Updated `TasksPage.jsx` with risk cards, dispute review tab, and AI subtask preview modal. |
+| 2026-09-02 | **Master Settings** | Added **Dynamic Addable System Roles** (`POST/DELETE /master/roles`) and **Dynamic Navigation Modules** (`POST/DELETE /master/menus`). Updated `MasterPage.jsx` with dedicated tabs and dynamic Role-Menu Access Matrix. |
+| 2026-09-02 | **HRMS & Attendance** | Resolved runtime white screen crash in `AttendancePage.jsx` by fixing undeclared state variables (`setActionMsg`, `setBulkMsg`), importing `toast` from `sonner`, and adding `getDepartments` alias to `employeesApi`. |
+| 2026-09-02 | **User & Task Forms** | Added auto-creation of login credentials (Email, Password, Role) during employee profile creation (`EmployeesPage.jsx`). Fixed Select user dropdown formatting in `TasksPage.jsx` assign forms. |
+| 2026-09-02 | **Designations Master** | Added Job Designations database model, API router (`POST/GET/DELETE /employees/designations`), and UI management in Master Settings page. |
+
+---
+
+## Advanced Feature Roadmap & Future Proposals
+
+> Detailed breakdown, execution order, and architectural guidelines are documented in [`roadmap.md`](file:///home/bipasha/Dev/Learning/TRACE/roadmap.md).
+
+### Tier 1 — High-Impact Differentiators
+| Feature | Status | Target Tier | Description & Value |
+|---------|--------|-------------|---------------------|
+| **Task Health Score** | ✅ | Tier 1 | Computed Green/Yellow/Red risk score rolled up tree levels via Celery Beat |
+| **Explainable AI + Dispute Queue** | ✅ | Tier 1 | Structured `{verdict, confidence, reasoning, evidence}` JSON + Team Lead appeal queue |
+| **AI Task Decomposition** | ✅ | Tier 1 | LLM-assisted subtree proposal before bulk creation |
+| **Auto-Escalation Engine** | ✅ | Tier 1/2 | Auto-escalate Red health tasks up rotation chain via Mailpit |
+| **Cross-Tree Overallocation** | ✅ | Tier 1 | Nightly load conflict detection across rotating-role task nodes |
+| **Scope-Drift Detection** | 🔲 | Tier 1 | Longitudinal commit intent tracking against original task scope |
+
+### Tier 2 & Tier 3 Innovations
+| Feature | Target Tier | Description & Value |
+|---------|-------------|---------------------|
+| **Chat-Ops Commands** | Tier 2 | Natural language task creation inside tree group chats (`@trace create...`) |
+| **Subtree Templates** | Tier 2 | Reusable sprint & rollout task hierarchy blueprints |
+| **Skill-Aware Recommendations** | Tier 2 | Member assignment suggestions based on historical tag pass rates |
+| **Contribution Heatmap** | Tier 2 | Unified GitHub-style calendar matrix for attendance, tasks & commits |
+| **Voice/Whiteboard Breakdown** | Tier 3 | Multimodal vision & audio task breakdown |
+| **Critical-Path DAG Overlay** | Tier 3 | Dynamic dependency graph & projected completion dates |
+| **AI Fairness Audit** | Tier 3 | Systemic variance audit dashboard for AI scoring transparency |
 
 ---
 
@@ -322,6 +359,7 @@ The system starts **after an employee already exists** in the system and ends at
 | File | Purpose |
 |------|---------|
 | `project.md` | **This file** — single source of truth for all features, decisions, plans |
+| `roadmap.md` | Strategic proposal, Tier 1/2/3 breakdown, build order, and AI execution rules |
 | `agent.md` | AI agent development context — rules, patterns, stack, how to contribute |
 | `ui.md` | UI component patterns, anti-patterns, shadcn usage guide |
 | `Overview.md` | Original handwritten scope notes (reference only — superseded by this file) |

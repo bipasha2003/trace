@@ -34,6 +34,9 @@ export const employeesApi = {
   listDepartments: () =>
     api.get('/departments'),
 
+  getDepartments: () =>
+    api.get('/departments'),
+
   /** POST /departments */
   createDepartment: (data) =>
     api.post('/departments', data),

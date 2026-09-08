@@ -17,8 +17,6 @@ As our syste starts after employee exsistance but we can not escape the bellow t
 #### task level roles:
 Fixed: project manager(task has many project managers which are basicaly users)
       ↓
-      team leads
-      ↓
       members
 
 ## Employee tracking for task management:

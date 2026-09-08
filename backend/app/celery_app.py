@@ -45,6 +45,16 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.send_weekly_report",
         "schedule": crontab(day_of_week="monday", hour=8, minute=0),
     },
+    # Compute task health score & auto-escalate — runs hourly
+    "compute-task-health-hourly": {
+        "task": "app.tasks.compute_task_health_and_escalate",
+        "schedule": crontab(minute=0),
+    },
+    # Detect overallocated employees across trees — runs nightly at 10 PM
+    "detect-overallocation-nightly": {
+        "task": "app.tasks.detect_overallocation",
+        "schedule": crontab(hour=22, minute=0),
+    },
 }
 
 # Auto-discover task modules

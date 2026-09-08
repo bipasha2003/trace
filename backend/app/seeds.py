@@ -24,7 +24,7 @@ logger = logging.getLogger("trace.seeds")
 
 # ── Reference Data ───────────────────────────────────────────────
 
-ROLES = ["Admin", "Manager", "Staff"]
+ROLES = ["Platform Admin", "Admin", "Manager", "Staff"]
 
 DEPARTMENTS = [
     {"name": "Design", "description": "UI/UX and graphic design team"},
@@ -32,6 +32,15 @@ DEPARTMENTS = [
     {"name": "QA", "description": "Quality assurance and testing"},
     {"name": "DevOps", "description": "Infrastructure and deployment operations"},
     {"name": "HR", "description": "Human resources and people operations"},
+]
+
+DESIGNATIONS = [
+    {"name": "Software Engineer", "description": "Full-stack application developer"},
+    {"name": "Senior Developer", "description": "Senior software engineer"},
+    {"name": "Team Lead", "description": "Engineering team lead"},
+    {"name": "Product Manager", "description": "Product strategy and task manager"},
+    {"name": "QA Specialist", "description": "Quality assurance engineer"},
+    {"name": "HR Specialist", "description": "People operations and HR manager"},
 ]
 
 TASK_TYPES = [
@@ -224,6 +233,94 @@ async def seed_admin_user(db: AsyncSession) -> None:
     print(f"  ✅ Employee record: TRACE-001")
 
 
+async def seed_platform_admin(db: AsyncSession) -> None:
+    """Create the Platform Admin user configured via environment variables."""
+    from datetime import date
+    from app.config import get_settings
+    from app.core.security import hash_password
+
+    settings = get_settings()
+
+    p_email = settings.PLATFORM_ADMIN_EMAIL
+    p_username = settings.PLATFORM_ADMIN_USERNAME
+    p_password = settings.PLATFORM_ADMIN_PASSWORD
+    p_name = settings.PLATFORM_ADMIN_NAME
+
+    # Check if platform admin already exists
+    existing = await db.execute(
+        select(User).where((User.email == p_email) | (User.username == p_username))
+    )
+    if existing.scalar_one_or_none() is not None:
+        print(f"  ⏭️  Platform Admin user: {p_email} (exists)")
+        return
+
+    # Get platform admin role
+    role_result = await db.execute(
+        select(Role).where(Role.role_name == "Platform Admin")
+    )
+    platform_role = role_result.scalar_one_or_none()
+    if platform_role is None:
+        role_result = await db.execute(
+            select(Role).where(Role.role_name == "Admin")
+        )
+        platform_role = role_result.scalar_one_or_none()
+
+    if platform_role is None:
+        print("  ❌ Neither 'Platform Admin' nor 'Admin' role found — skipping platform admin user seed")
+        return
+
+    # Get department & schedule for employee record
+    dept_result = await db.execute(
+        select(Department).where(Department.name == "DevOps")
+    )
+    dept = dept_result.scalar_one_or_none()
+
+    ws_result = await db.execute(
+        select(WorkSchedule).where(WorkSchedule.schedule_name == "Standard (9-6)")
+    )
+    work_schedule = ws_result.scalar_one_or_none()
+
+    # Create profile
+    profile = Profile()
+    db.add(profile)
+    await db.flush()
+
+    # Create user
+    user = User(
+        name=p_name,
+        username=p_username,
+        email=p_email,
+        password=hash_password(p_password),
+        phone="+1-800-555-0199",
+        gender="Other",
+        profile_id=profile.id,
+        is_verified=True,
+        status="Active",
+    )
+    db.add(user)
+    await db.flush()
+
+    # Assign role
+    user_role = UserRole(user_id=user.id, role_id=platform_role.id)
+    db.add(user_role)
+    await db.flush()
+
+    # Create employee record
+    employee = Employee(
+        user_id=user.id,
+        employee_code="PLATFORM-001",
+        department_id=dept.id if dept else None,
+        work_schedule_id=work_schedule.id if work_schedule else None,
+        joining_date=date.today(),
+        status="Active",
+    )
+    db.add(employee)
+    await db.flush()
+
+    print(f"  ✅ Platform Admin user: {p_email} (username: {p_username})")
+    print(f"  ✅ Employee record: PLATFORM-001")
+
+
 async def seed_sample_tree_and_hrms(db: AsyncSession) -> None:
     """Seed initial nested task hierarchy (Project Manager -> Team Lead -> Ground Member) and Holidays."""
     from datetime import date
@@ -297,6 +394,16 @@ async def run_seeds() -> None:
             print("\n🏢 Departments:")
             await seed_departments(db)
 
+            print("\n💼 Designations:")
+            from app.models.employee import Designation
+            for desig in DESIGNATIONS:
+                existing = await db.execute(select(Designation).where(Designation.name == desig["name"]))
+                if existing.scalar_one_or_none() is None:
+                    db.add(Designation(**desig))
+                    print(f"  ✅ Designation: {desig['name']}")
+                else:
+                    print(f"  ⏭️  Designation: {desig['name']} (exists)")
+
             print("\n📝 Task Types:")
             await seed_task_types(db)
 
@@ -308,6 +415,9 @@ async def run_seeds() -> None:
 
             print("\n👤 Admin User:")
             await seed_admin_user(db)
+
+            print("\n👑 Platform Admin User:")
+            await seed_platform_admin(db)
 
             print("\n🌳 Task Tree & HRMS Data:")
             await seed_sample_tree_and_hrms(db)

@@ -14,6 +14,8 @@ from app.models.user import User
 from app.schemas.employee import (
     DepartmentCreate,
     DepartmentResponse,
+    DesignationCreate,
+    DesignationResponse,
     EmployeeCreate,
     EmployeeListResponse,
     EmployeeResponse,
@@ -23,11 +25,60 @@ from app.schemas.employee import (
 )
 from app.services.employee_service import (
     DepartmentService,
+    DesignationService,
     EmployeeService,
     WorkScheduleService,
 )
 
 router = APIRouter(tags=["Employees"])
+
+
+# ══════════════════════════════════════════════════════════════════
+#  DESIGNATIONS
+# ══════════════════════════════════════════════════════════════════
+
+@router.post(
+    "/designations",
+    response_model=DesignationResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create designation",
+    description="Admin/Manager only.",
+)
+async def create_designation(
+    data: DesignationCreate,
+    current_user: User = Depends(require_manager_or_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    service = DesignationService(db)
+    return await service.create(data)
+
+
+@router.get(
+    "/designations",
+    response_model=list[DesignationResponse],
+    summary="List all designations",
+)
+async def list_designations(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    service = DesignationService(db)
+    return await service.list_all()
+
+
+@router.delete(
+    "/designations/{desig_id}",
+    summary="Delete designation",
+    description="Admin only.",
+)
+async def delete_designation(
+    desig_id: int,
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    service = DesignationService(db)
+    return await service.delete(desig_id)
+
 
 
 # ══════════════════════════════════════════════════════════════════

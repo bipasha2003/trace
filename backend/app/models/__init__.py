@@ -5,10 +5,10 @@ Imports all models so Alembic and the app can discover them.
 
 from app.models.base import BaseModelMixin, SoftDeleteMixin, TimestampMixin
 from app.models.user import Profile, Role, User, UserRole
-from app.models.employee import Department, Employee, EmployeeDetail, WorkSchedule
+from app.models.employee import Department, Designation, Employee, EmployeeDetail, RoleMenuPermission, SystemMenu, WorkSchedule
 from app.models.attendance import Attendance, TimeZone
 from app.models.hrms import Leave, Holiday
-from app.models.task import Task, TaskComment, TaskDetail, TaskTimeLog, TaskType, ProjectGroup, ProjectGroupMessage
+from app.models.task import Task, TaskComment, TaskDetail, TaskTimeLog, TaskType, ProjectGroup, ProjectGroupMessage, EvaluationDispute, TaskCommitLog
 from app.models.productivity import ProductivityScore
 
 __all__ = [
@@ -25,6 +25,8 @@ __all__ = [
     "Employee",
     "EmployeeDetail",
     "Department",
+    "Designation",
+    "RoleMenuPermission",
     "WorkSchedule",
     # Attendance
     "Attendance",

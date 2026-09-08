@@ -1,6 +1,6 @@
 """
 TRACE - Employee Service
-Business logic for employee, department, and work schedule management.
+Business logic for employee, department, designation, work schedule management, and user auto-creation.
 """
 
 from datetime import date, datetime, timezone
@@ -9,11 +9,15 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.security import hash_password
 from app.exceptions import AlreadyExistsException, NotFoundException
-from app.models.employee import Department, Employee, EmployeeDetail, WorkSchedule
+from app.models.employee import Department, Designation, Employee, EmployeeDetail, WorkSchedule
+from app.models.user import User, Role, UserRole
 from app.schemas.employee import (
     DepartmentCreate,
     DepartmentResponse,
+    DesignationCreate,
+    DesignationResponse,
     EmployeeCreate,
     EmployeeDetailCreate,
     EmployeeListResponse,
@@ -22,6 +26,59 @@ from app.schemas.employee import (
     WorkScheduleCreate,
     WorkScheduleResponse,
 )
+
+
+class DesignationService:
+    """Designation CRUD operations."""
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def create(self, data: DesignationCreate) -> DesignationResponse:
+        existing = await self.db.execute(
+            select(Designation).where(
+                Designation.name == data.name, Designation.deleted_at.is_(None)
+            )
+        )
+        if existing.scalar_one_or_none():
+            raise AlreadyExistsException("Designation")
+
+        desig = Designation(name=data.name, description=data.description)
+        self.db.add(desig)
+        await self.db.flush()
+        return DesignationResponse.model_validate(desig)
+
+    async def list_all(self) -> list[DesignationResponse]:
+        result = await self.db.execute(
+            select(Designation)
+            .where(Designation.deleted_at.is_(None))
+            .order_by(Designation.name)
+        )
+        return [DesignationResponse.model_validate(d) for d in result.scalars().all()]
+
+    async def get_by_id(self, desig_id: int) -> DesignationResponse:
+        result = await self.db.execute(
+            select(Designation).where(
+                Designation.id == desig_id, Designation.deleted_at.is_(None)
+            )
+        )
+        desig = result.scalar_one_or_none()
+        if desig is None:
+            raise NotFoundException("Designation")
+        return DesignationResponse.model_validate(desig)
+
+    async def delete(self, desig_id: int) -> dict:
+        result = await self.db.execute(
+            select(Designation).where(
+                Designation.id == desig_id, Designation.deleted_at.is_(None)
+            )
+        )
+        desig = result.scalar_one_or_none()
+        if desig is None:
+            raise NotFoundException("Designation")
+        desig.deleted_at = datetime.now(timezone.utc)
+        await self.db.flush()
+        return {"message": "Designation deleted", "id": desig_id}
 
 
 class DepartmentService:
@@ -131,6 +188,45 @@ class EmployeeService:
         if existing.scalar_one_or_none():
             raise AlreadyExistsException("Employee with this code")
 
+        # Resolve or auto-create User
+        target_user_id = data.user_id
+        if not target_user_id:
+            if not data.email or not data.password:
+                raise ValueError("Either user_id or email & password must be provided to create an employee.")
+            
+            # Check if user with this email already exists
+            user_res = await self.db.execute(select(User).where(User.email == data.email))
+            existing_user = user_res.scalar_one_or_none()
+            if existing_user:
+                target_user_id = existing_user.id
+            else:
+                uname = data.email.split("@")[0]
+                user_name = data.name or uname
+                new_user = User(
+                    name=user_name,
+                    username=uname,
+                    email=data.email,
+                    password=hash_password(data.password),
+                    is_verified=True,
+                    status="Active",
+                )
+                self.db.add(new_user)
+                await self.db.flush()
+                target_user_id = new_user.id
+
+                # Assign requested role
+                role_name = data.role or "Employee"
+                role_res = await self.db.execute(select(Role).where(Role.role_name == role_name))
+                role_obj = role_res.scalar_one_or_none()
+                if not role_obj:
+                    role_obj = Role(role_name=role_name)
+                    self.db.add(role_obj)
+                    await self.db.flush()
+                
+                user_role = UserRole(user_id=new_user.id, role_id=role_obj.id)
+                self.db.add(user_role)
+                await self.db.flush()
+
         # Create employee_detail if provided
         detail_id = None
         if data.employee_detail:
@@ -140,10 +236,11 @@ class EmployeeService:
             detail_id = detail.id
 
         employee = Employee(
-            user_id=data.user_id,
+            user_id=target_user_id,
             employee_code=data.employee_code,
             manager_id=data.manager_id,
             department_id=data.department_id,
+            designation_id=data.designation_id,
             work_schedule_id=data.work_schedule_id,
             employee_details_id=detail_id,
             joining_date=data.joining_date or date.today(),
@@ -160,14 +257,33 @@ class EmployeeService:
             .options(
                 selectinload(Employee.employee_detail),
                 selectinload(Employee.department),
+                selectinload(Employee.designation),
                 selectinload(Employee.work_schedule),
+                selectinload(Employee.user),
             )
         )
         result = await self.db.execute(stmt)
         employee = result.scalar_one_or_none()
         if employee is None:
             raise NotFoundException("Employee")
-        return EmployeeResponse.model_validate(employee)
+
+        resp = EmployeeResponse.model_validate(employee)
+        if employee.user:
+            # Attach user role if available
+            role_name = "Employee"
+            if employee.user.user_roles:
+                # Get role name from first user role
+                r = employee.user.user_roles[0]
+                if hasattr(r, 'role') and r.role:
+                    role_name = r.role.role_name
+            resp.user = {
+                "id": employee.user.id,
+                "name": employee.user.name,
+                "username": employee.user.username,
+                "email": employee.user.email,
+                "role": role_name,
+            }
+        return resp
 
     async def get_by_user_id(self, user_id: int) -> EmployeeResponse:
         stmt = (
@@ -176,14 +292,16 @@ class EmployeeService:
             .options(
                 selectinload(Employee.employee_detail),
                 selectinload(Employee.department),
+                selectinload(Employee.designation),
                 selectinload(Employee.work_schedule),
+                selectinload(Employee.user),
             )
         )
         result = await self.db.execute(stmt)
         employee = result.scalar_one_or_none()
         if employee is None:
             raise NotFoundException("Employee")
-        return EmployeeResponse.model_validate(employee)
+        return await self.get_by_id(employee.id)
 
     async def list_employees(
         self,
@@ -208,7 +326,9 @@ class EmployeeService:
             .options(
                 selectinload(Employee.employee_detail),
                 selectinload(Employee.department),
+                selectinload(Employee.designation),
                 selectinload(Employee.work_schedule),
+                selectinload(Employee.user),
             )
             .order_by(Employee.created_at.desc())
             .offset(offset)
@@ -217,8 +337,26 @@ class EmployeeService:
         result = await self.db.execute(stmt)
         employees = result.scalars().all()
 
+        emp_responses = []
+        for e in employees:
+            resp = EmployeeResponse.model_validate(e)
+            if e.user:
+                role_name = "Employee"
+                if e.user.user_roles:
+                    r = e.user.user_roles[0]
+                    if hasattr(r, 'role') and r.role:
+                        role_name = r.role.role_name
+                resp.user = {
+                    "id": e.user.id,
+                    "name": e.user.name,
+                    "username": e.user.username,
+                    "email": e.user.email,
+                    "role": role_name,
+                }
+            emp_responses.append(resp)
+
         return EmployeeListResponse(
-            employees=[EmployeeResponse.model_validate(e) for e in employees],
+            employees=emp_responses,
             total=total,
             page=page,
             per_page=per_page,

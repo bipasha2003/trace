@@ -5,11 +5,58 @@ Tables: employees, departments, work_schedules, employee_details
 
 from datetime import date, time
 
-from sqlalchemy import BigInteger, Date, ForeignKey, Integer, String, Text, Time
+from sqlalchemy import BigInteger, Boolean, Date, ForeignKey, Integer, String, Text, Time, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 from app.models.base import BaseModelMixin
+
+
+class Designation(BaseModelMixin, Base):
+    """
+    designations table — job roles and designations.
+    """
+
+    __tablename__ = "designations"
+
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    employees: Mapped[list["Employee"]] = relationship(
+        "Employee", back_populates="designation"
+    )
+
+    def __repr__(self) -> str:
+        return f"<Designation(id={self.id}, name={self.name})>"
+
+
+class RoleMenuPermission(BaseModelMixin, Base):
+    """
+    role_menu_permissions table — maps menu keys to user roles.
+    """
+
+    __tablename__ = "role_menu_permissions"
+
+    role_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    menu_key: Mapped[str] = mapped_column(String(50), nullable=False)
+    is_allowed: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("role_name", "menu_key", name="uq_role_menu"),
+    )
+
+
+class SystemMenu(BaseModelMixin, Base):
+    """
+    system_menus table — dynamic navigation modules/menus.
+    """
+
+    __tablename__ = "system_menus"
+
+    key: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    label: Mapped[str] = mapped_column(String(100), nullable=False)
+    icon: Mapped[str | None] = mapped_column(String(50), default="LayoutDashboard", nullable=True)
+    is_custom: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
 class Department(BaseModelMixin, Base):
@@ -96,6 +143,9 @@ class Employee(BaseModelMixin, Base):
     department_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("departments.id"), nullable=True
     )
+    designation_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("designations.id"), nullable=True
+    )
     work_schedule_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("work_schedules.id"), nullable=True
     )
@@ -117,6 +167,9 @@ class Employee(BaseModelMixin, Base):
     )
     department: Mapped[Department | None] = relationship(
         "Department", back_populates="employees"
+    )
+    designation: Mapped[Designation | None] = relationship(
+        "Designation", back_populates="employees"
     )
     work_schedule: Mapped[WorkSchedule | None] = relationship(
         "WorkSchedule", back_populates="employees"

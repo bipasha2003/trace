@@ -79,6 +79,9 @@ class Task(BaseModelMixin, Base):
     commit_hash: Mapped[str | None] = mapped_column(String(100), nullable=True)
     llm_verification_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     tree_path: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    health_score: Mapped[str] = mapped_column(String(20), default="Green", nullable=False)  # Green, Yellow, Red
+    health_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_health_check: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # ── Relationships ────────────────────────────────────────────
     task_type: Mapped[TaskType | None] = relationship("TaskType", back_populates="tasks")
@@ -227,6 +230,41 @@ class ProjectGroupMessage(BaseModelMixin, Base):
     # ── Relationships ────────────────────────────────────────────
     group: Mapped[ProjectGroup] = relationship("ProjectGroup", back_populates="messages")
     sender: Mapped["Employee"] = relationship("Employee")
+
+
+class EvaluationDispute(BaseModelMixin, Base):
+    """
+    evaluation_disputes table — transparency and dispute workflow for AI commit verification & scores.
+    """
+
+    __tablename__ = "evaluation_disputes"
+
+    task_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tasks.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
+    dispute_type: Mapped[str] = mapped_column(String(50), default="commit_verification", nullable=False)
+    original_verdict: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="Pending", nullable=False)  # Pending, Approved, Rejected
+    reviewer_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=True)
+    reviewer_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    task: Mapped[Task] = relationship("Task")
+
+
+class TaskCommitLog(BaseModelMixin, Base):
+    """
+    task_commit_logs table — longitudinal intent summaries for scope-drift tracking.
+    """
+
+    __tablename__ = "task_commit_logs"
+
+    task_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tasks.id"), nullable=False)
+    commit_hash: Mapped[str] = mapped_column(String(100), nullable=False)
+    commit_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    intent_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    structured_verification: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    task: Mapped[Task] = relationship("Task")
 
 
 # Forward reference import

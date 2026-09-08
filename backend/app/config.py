@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     SENDGRID_API_KEY: str = ""
     ADMIN_EMAIL: str = "admin@trace.com"
 
+    # ── Platform Admin Seeding ──────────────────────────────────
+    PLATFORM_ADMIN_EMAIL: str = "platformadmin@trace.com"
+    PLATFORM_ADMIN_USERNAME: str = "platform_admin"
+    PLATFORM_ADMIN_PASSWORD: str = "PlatformAdmin@123"
+    PLATFORM_ADMIN_NAME: str = "Platform Administrator"
+
     # ── Geo-Fence ────────────────────────────────────────────────
     DEFAULT_GEO_FENCE_RADIUS_METERS: int = 200
 
@@ -59,6 +65,7 @@ class Settings(BaseSettings):
         "env_file": ".env",
         "env_file_encoding": "utf-8",
         "case_sensitive": True,
+        "extra": "ignore",
     }
 
 

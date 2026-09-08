@@ -110,6 +110,9 @@ class TaskResponse(BaseModel):
     estimated_hours: Decimal | None = None
     due_date: date | None = None
     status: str
+    health_score: str = "Green"
+    health_reason: str | None = None
+    last_health_check: datetime | None = None
     task_detail: TaskDetailResponse | None = None
     task_type: TaskTypeResponse | None = None
     comments: list[TaskCommentResponse] = []
@@ -123,3 +126,31 @@ class TaskListResponse(BaseModel):
     total: int
     page: int
     per_page: int
+
+
+# ── AI Feature Schemas ──────────────────────────────────────────
+
+class EvaluationDisputeCreate(BaseModel):
+    task_id: int
+    dispute_type: str = Field(default="commit_verification")
+    original_verdict: str | None = None
+    user_reason: str = Field(..., min_length=5)
+
+
+class EvaluationDisputeReview(BaseModel):
+    status: str = Field(..., pattern="^(Approved|Rejected)$")
+    reviewer_notes: str | None = None
+
+
+class SubtaskSuggestionItem(BaseModel):
+    title: str
+    description: str
+    priority: str = "Medium"
+    estimated_hours: float = 4.0
+    suggested_role: str = "Member"
+
+
+class SubtaskDecompositionResponse(BaseModel):
+    task_id: int
+    suggestions: list[SubtaskSuggestionItem]
+

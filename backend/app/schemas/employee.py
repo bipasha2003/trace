@@ -4,8 +4,23 @@ Pydantic models for employee management.
 """
 
 from datetime import date, datetime, time
+from pydantic import BaseModel, EmailStr, Field
 
-from pydantic import BaseModel, Field
+
+# ── Designation ──────────────────────────────────────────────────
+
+class DesignationCreate(BaseModel):
+    name: str = Field(..., max_length=100)
+    description: str | None = None
+
+
+class DesignationResponse(BaseModel):
+    id: int
+    name: str
+    description: str | None = None
+    created_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
 
 
 # ── Department ───────────────────────────────────────────────────
@@ -63,13 +78,32 @@ class EmployeeDetailResponse(EmployeeDetailCreate):
     model_config = {"from_attributes": True}
 
 
+# ── User Brief ───────────────────────────────────────────────────
+
+class UserBriefResponse(BaseModel):
+    id: int
+    name: str
+    username: str
+    email: str
+    role: str = "Employee"
+
+    model_config = {"from_attributes": True}
+
+
 # ── Employee ─────────────────────────────────────────────────────
 
 class EmployeeCreate(BaseModel):
-    user_id: int
+    user_id: int | None = None
+    # If user_id is missing, creation will auto-create a user using these:
+    name: str | None = None
+    email: EmailStr | None = None
+    password: str | None = None
+    role: str = "Employee"
+
     employee_code: str = Field(..., max_length=50)
     manager_id: int | None = None
     department_id: int | None = None
+    designation_id: int | None = None
     work_schedule_id: int | None = None
     joining_date: date | None = None
     employee_detail: EmployeeDetailCreate | None = None
@@ -78,6 +112,7 @@ class EmployeeCreate(BaseModel):
 class EmployeeUpdate(BaseModel):
     manager_id: int | None = None
     department_id: int | None = None
+    designation_id: int | None = None
     work_schedule_id: int | None = None
     status: str | None = None
 
@@ -88,12 +123,15 @@ class EmployeeResponse(BaseModel):
     employee_code: str
     manager_id: int | None = None
     department_id: int | None = None
+    designation_id: int | None = None
     work_schedule_id: int | None = None
     joining_date: date | None = None
     status: str
     employee_detail: EmployeeDetailResponse | None = None
     department: DepartmentResponse | None = None
+    designation: DesignationResponse | None = None
     work_schedule: WorkScheduleResponse | None = None
+    user: UserBriefResponse | None = None
     created_at: datetime | None = None
 
     model_config = {"from_attributes": True}

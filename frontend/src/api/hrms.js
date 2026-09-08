@@ -53,6 +53,18 @@ export const hrmsApi = {
   deleteShift: (id) =>
     api.delete(`/hrms/shifts/${id}`),
 
+  /** POST /hrms/employees/:id/assign-shift */
+  assignShift: (employeeId, shiftId) =>
+    api.post(`/hrms/employees/${employeeId}/assign-shift`, { shift_id: shiftId }),
+
+  /** GET /hrms/employees/:id/leave-balance?year= */
+  getLeaveBalance: (employeeId, year = null) =>
+    api.get(`/hrms/employees/${employeeId}/leave-balance`, { params: year ? { year } : {} }),
+
+  /** GET /hrms/leave-balance/summary?year= */
+  getAllLeaveBalance: (year = null) =>
+    api.get('/hrms/leave-balance/summary', { params: year ? { year } : {} }),
+
   /** POST /hrms/bulk-upload */
   bulkUpload: (entityType, file) => {
     const formData = new FormData()

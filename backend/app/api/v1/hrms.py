@@ -340,3 +340,98 @@ async def bulk_upload_hrms_data(
         await db.rollback()
         logger.error(f"Bulk upload failed: {e}")
         raise HTTPException(status_code=500, detail=f"Database import failed: {str(e)}")
+
+
+# ── SHIFT ASSIGNMENT ──────────────────────────────────────────────
+class ShiftAssignRequest(BaseModel):
+    shift_id: int
+
+
+@router.post("/employees/{employee_id}/assign-shift")
+async def assign_shift_to_employee(
+    employee_id: int,
+    data: ShiftAssignRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Assign a work schedule shift to an employee."""
+    from app.models.employee import Employee
+    emp = (await db.execute(select(Employee).where(Employee.id == employee_id, Employee.deleted_at.is_(None)))).scalar_one_or_none()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    shift = (await db.execute(select(WorkSchedule).where(WorkSchedule.id == data.shift_id))).scalar_one_or_none()
+    if not shift:
+        raise HTTPException(status_code=404, detail="Shift not found")
+    emp.work_schedule_id = data.shift_id
+    await db.commit()
+    return {"status": "success", "message": f"Shift '{shift.schedule_name}' assigned to employee {employee_id}"}
+
+
+# ── LEAVE BALANCE ─────────────────────────────────────────────────
+LEAVE_ENTITLEMENTS = {
+    "Casual": 10,
+    "Sick": 7,
+    "Earned": 15,
+    "Unpaid": 0,
+}
+
+
+@router.get("/employees/{employee_id}/leave-balance")
+async def get_leave_balance(employee_id: int, year: int = None, db: AsyncSession = Depends(get_db)):
+    """Get annual leave balance for an employee (used vs. remaining)."""
+    from sqlalchemy import func, extract
+    import datetime
+
+    yr = year or datetime.date.today().year
+    result = await db.execute(
+        select(Leave.leave_type, func.count(Leave.id).label("count"))
+        .where(
+            Leave.employee_id == employee_id,
+            Leave.status == "Approved",
+            extract("year", Leave.start_date) == yr,
+        )
+        .group_by(Leave.leave_type)
+    )
+    used_map = {row.leave_type: row.count for row in result.all()}
+
+    balance = {}
+    for lt, entitlement in LEAVE_ENTITLEMENTS.items():
+        used = used_map.get(lt, 0)
+        balance[lt] = {"entitlement": entitlement, "used": used, "remaining": max(0, entitlement - used)}
+
+    return {"employee_id": employee_id, "year": yr, "balance": balance}
+
+
+@router.get("/leave-balance/summary")
+async def all_employees_leave_balance(year: int = None, db: AsyncSession = Depends(get_db)):
+    """Aggregate leave balance summary for all employees."""
+    from sqlalchemy import func, extract
+    from app.models.employee import Employee
+    import datetime
+
+    yr = year or datetime.date.today().year
+    result = await db.execute(
+        select(Leave.employee_id, Leave.leave_type, func.count(Leave.id).label("count"))
+        .where(Leave.status == "Approved", extract("year", Leave.start_date) == yr)
+        .group_by(Leave.employee_id, Leave.leave_type)
+    )
+    rows = result.all()
+
+    # Build per-employee map
+    emp_map: dict[int, dict] = {}
+    for row in rows:
+        if row.employee_id not in emp_map:
+            emp_map[row.employee_id] = {}
+        emp_map[row.employee_id][row.leave_type] = row.count
+
+    # Get all employees
+    emps = (await db.execute(select(Employee).where(Employee.deleted_at.is_(None)))).scalars().all()
+    summary = []
+    for emp in emps:
+        used = emp_map.get(emp.id, {})
+        b = {}
+        for lt, ent in LEAVE_ENTITLEMENTS.items():
+            u = used.get(lt, 0)
+            b[lt] = {"entitlement": ent, "used": u, "remaining": max(0, ent - u)}
+        summary.append({"employee_id": emp.id, "employee_code": emp.employee_code, "balance": b})
+
+    return {"year": yr, "entitlements": LEAVE_ENTITLEMENTS, "employees": summary}

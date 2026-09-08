@@ -7,13 +7,10 @@
 
 ## The Golden Rule
 
-**After implementing or changing any feature, update `project.md` accordingly.**
-- Mark newly implemented features as ✅
-- Change partial features from 🔲 to 🔶
-- Add new decisions to the "Key Architectural Decisions" table
-- Add new future ideas to the "Future Plans" section
-
-Also update `ui.md` if new UI patterns are introduced or component usage changes.
+**As we develop, ALWAYS update the documentation (`project.md`, `agent.md`, `ui.md`).**
+1. **`project.md`**: Update feature status (mark completed as ✅, partial as 🔶), record architectural decisions, and document new endpoints/modules.
+2. **`agent.md`**: Keep backend route references, API client maps, and dev workflows current.
+3. **`ui.md`**: Document newly added UI components or page layouts.
 
 ---
 
@@ -25,7 +22,7 @@ Also update `ui.md` if new UI patterns are introduced or component usage changes
 | UI Library | shadcn/ui — preset `b1tNnRXF5` (`base-mira` style) |
 | CSS | Tailwind CSS v4, OKLCH design tokens |
 | Icons | `lucide-react` **only** |
-| Font | Raleway Variable |
+| Notifications | `sonner` Toaster |
 | Backend | FastAPI + async SQLAlchemy 2.0 + Pydantic V2 |
 | Database | PostgreSQL (Alembic migrations) |
 | Cache / Queue | Redis + Celery 5 (Worker + Beat) |
@@ -33,50 +30,6 @@ Also update `ui.md` if new UI patterns are introduced or component usage changes
 | Mail | Mailpit (SMTP catch-all) |
 | AI / LLM | OpenAI SDK (via Celery task) |
 | Auth | JWT access token in `localStorage` |
-
----
-
-## Mandatory UI Rules
-
-1. **Only use shadcn/ui components.** Never write custom CSS or inline styles.
-2. **Icons from `lucide-react` only.** No `react-icons`, `heroicons`, etc.
-3. **Dark mode = `.dark` class on `<html>`.** `ThemeContext.toggleMode()` handles it.
-4. **Tailwind classes: semantic tokens only.** Use `bg-background`, `text-muted-foreground`, `border-border`, etc. Never `bg-violet-500/20` or `text-white/60`.
-5. **See `ui.md`** for component patterns (Card, Button, Dialog, Table, Tabs, etc.) before writing new UI.
-
----
-
-## Key Import Paths
-
-```js
-// shadcn components
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { Switch } from '@/components/ui/switch'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Progress } from '@/components/ui/progress'
-
-// API layer
-import { employeesApi, tasksApi, attendanceApi, hrmsApi, productivityApi, authApi } from '@/api'
-import api from '@/api/client'
-import servicesApi from '@/api/services'
-
-// Contexts
-import { useAuth } from '@/contexts/AuthContext'
-import { useTheme } from '@/contexts/ThemeContext'
-
-// Utilities
-import { cn, getInitials, timeAgo } from '@/lib/utils'
-```
 
 ---
 
@@ -88,12 +41,18 @@ import { cn, getInitials, timeAgo } from '@/lib/utils'
 |--------|-------------|------|
 | Auth | `/auth` | `api/v1/auth.py` |
 | Users | `/users` | `api/v1/users.py` |
-| Employees + Departments | `/employees` | `api/v1/employees.py` |
+| Employees + Designations | `/employees` | `api/v1/employees.py` |
 | Attendance | `/attendance` | `api/v1/attendance.py` |
 | HRMS (Leaves / Holidays / Shifts) | `/hrms` | `api/v1/hrms.py` |
+| Master (Roles, Dynamic Menus, Permission Matrix) | `/master` | `api/v1/master.py` |
 | Tasks (Tree, GitHub, LLM, Groups) | `/tasks` | `api/v1/tasks.py` |
 | Productivity + Reports | `/productivity`, `/reports` | `api/v1/productivity.py` |
 | Services / Health / WS / MinIO / Mail / LLM | `/services` | `api/v1/services.py` |
+
+### Key Master API Endpoints
+- `GET /api/v1/master/roles` & `POST /api/v1/master/roles` & `DELETE /api/v1/master/roles/{id}`: Dynamic system role management.
+- `GET /api/v1/master/menus` & `POST /api/v1/master/menus` & `DELETE /api/v1/master/menus/{id}`: Dynamic navigation module registration.
+- `GET /api/v1/master/menu-permissions` & `POST /api/v1/master/menu-permissions`: Dynamic role-menu access matrix.
 
 ### Key Task Endpoints
 ```
@@ -223,6 +182,22 @@ uvicorn app.main:app --reload --port 8000
 
 ---
 
+## Recent Development Progress & Updates
+
+- **Advanced Roadmap Tier 1 Implementation**:
+  - **Task Health Score & Rollup**: Added `health_score`, `health_reason`, and `last_health_check` fields to `Task` model. Added Celery Beat job `compute_task_health_and_escalate` to evaluate due dates, blocker keywords, and single-child worst health tree rollups. Exposed `GET /api/v1/tasks/health-summary` and `POST /api/v1/tasks/{id}/compute-health`.
+  - **AI Subtask Decomposition**: Implemented `POST /api/v1/tasks/{id}/suggest-subtasks` invoking OpenAI SDK (with smart rule engine fallback) to generate structured subtask hierarchies, previewed in `TasksPage.jsx` modal with bulk creation capability.
+  - **Explainable AI Dispute Queue**: Created `EvaluationDispute` model and endpoints (`POST /api/v1/tasks/dispute`, `GET /api/v1/tasks/disputes`, `PATCH /api/v1/tasks/disputes/{id}`). Integrated a dedicated "Dispute Queue" tab in `TasksPage.jsx` for Team Lead/PM review.
+  - **Auto-Escalation Engine**: Triggered automated email alerts via Mailpit (`send_mail_task`) whenever tasks are evaluated as `Red`.
+  - **Cross-Tree Overallocation Detection**: Added Celery Beat job `detect_overallocation` and `GET /api/v1/tasks/overallocations` to flag workload conflicts across rotating-role task nodes.
+- **Dynamic System Roles**: Implemented database model and API routes (`POST/DELETE /api/v1/master/roles`) allowing dynamic creation and management of system roles. Added dynamic role options in `EmployeesPage.jsx` modal and `MasterPage.jsx`.
+- **Dynamic Navigation Modules**: Created `SystemMenu` database model and API endpoints (`POST/DELETE /api/v1/master/menus`) for custom navigation module registration and management.
+- **Dynamic Role-Menu Access Matrix**: Integrated dynamic roles and dynamic navigation modules into a real-time permission matrix table in `MasterPage.jsx`.
+- **Attendance Page Fix**: Resolved runtime white screen crash in `AttendancePage.jsx` caused by undeclared notification variables (`setActionMsg`, `setBulkMsg`), missing `sonner` toast imports, and added `getDepartments` alias to `employeesApi`.
+- **Select Display Formatting**: Updated assign employee select dropdown in `TasksPage.jsx` to render clean employee text (`TRACE-001 — Jane Doe`) instead of raw IDs.
+
+---
+
 ## Anti-Patterns
 
 ```jsx
@@ -239,14 +214,24 @@ import { LayoutDashboard } from 'lucide-react'
 
 ---
 
+## Advanced Feature Architecture Rules
+
+- **Async LLM Workers Only:** Wrap all OpenAI SDK calls inside background Celery tasks. Never invoke LLM endpoints synchronously inside FastAPI route handlers.
+- **Structured Output Enforced:** Enforce JSON schema responses (`{verdict, confidence, reasoning, evidence}`) for LLM tasks so verdict data can be queried for disputes, drift analysis, and fairness audits.
+- **Celery Beat Periodic Jobs:** Batch periodic risk evaluations (Task Health Score, Scope-Drift, Overallocation queries) into scheduled Celery Beat tasks rather than ad-hoc scripts.
+- **Additive Schema Design:** Maintain backwards compatibility with the recursive `parent_task_id` task tree.
+
+---
+
 ## Document Map
 
 | File | Purpose | Edit? |
 |------|---------|-------|
 | `project.md` | Feature registry, decisions, plans — **the project mirror** | ✅ Keep updated |
+| `roadmap.md` | Advanced Feature Roadmap (Tier 1, Tier 2, Tier 3 proposal) | ✅ Keep updated |
 | `agent.md` | This file — your dev context | ✅ Keep updated |
 | `ui.md` | shadcn component usage guide | ✅ Update when patterns change |
 | `Overview.md` | Original handwritten scope (historical) | ❌ Archive only |
-| `Devplopment.md` | Original service notes (historical) | ❌ Archive only |
+| `Devplopment.md` | Original service notes (reference only) | ❌ Archive only |
 | `AGENT.md` | Original agent report (historical) | ❌ Archive only |
 | `README.md` | Quick-start guide | Update as needed |
