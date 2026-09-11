@@ -25,6 +25,29 @@ Admin:
         Reports - to be discussed
          
 
+Manager:
+    no sidebar
+    Actions:
+        Project create(project manager assignment and removal) and progress view and progress report.
+        per own project detailed view
+        create project.md file by generative AI from project source files. 
+    expected UI:
+        only topbar with project selection. if "All" selected (which is default) shows combined dashboard and also provides feature to add new project.
+
+
+Employee: 
+        Project Manager -
+                Expected ui - Similar project selector as platfrom manager. By default it will show similar dashboard of combined projects , their progress ,tasks,etc .
+                If any project is selected then we will show the project dashboard along side task creation feature under the projeects .
+        Member -
+                Expected ui - Similar project selector as platfrom manager. By default it will show similar dashboard of combined projects , their progress ,tasks,etc .
+                If any project is selected then we will show the project dashboard . 
+
+** Project Tree as a graph **                
+
+
+
+
 
 
 
@@ -38,3 +61,65 @@ Project completation report,
 Employee  performance report,
 Progess report(by time interval)
 
+
+
+
+New requirements about project table -
+        project(below is has many files):
+                project_source_files(multiple file field)
+        
+        project(these are fields but will hold md file as github repository file urls):
+                Project_initial_doc (contents about the project will be scrapped by AI from project_source_files)
+                Project_doc (dupicate of Project_initial_doc, but will be updated by task completioners as project features shifts/changes or adds up)
+                Progress_doc (has to be updated by task completioner)
+                ProjectReport_doc (has to be updated by task completioner)
+                Autometic gnatt chart creation and updation by task completion .
+
+
+New requirements about project table -
+        project(below is has many files):
+                project_source_files(multiple file field)
+        
+        project(these are fields but will hold md file as github repository file urls):
+                Project_initial_doc (contents about the project will be scrapped by AI from project_source_files)
+                project_doc (dupicate of Project_initial_doc, but will be updated by task completioners as project features shifts/changes or adds up)
+                project_progress_doc (has to be updated by task completioner)
+                ProjectReport_doc (has to be updated by task completioner)
+                Autometic gnatt chart creation and updation by task completion .
+
+
+
+
+
+task management automation:
+    manager step: manager brings and creates project and also uploads initial project requirement docs to project_source_files
+                        ↓
+    AI step: from the initial docs, scraps contents and creates project_initial_doc(project_doc will be clone of it), gantt chart.
+        gantt chart - from the initial requirements, AI will create task groups (which are treated as modules for gantt chart) and will evaluate expected duration, thus the gantt chart is created.
+        
+                    ↓
+    project manager step: 
+        if required project manager will add detailed features to project doc which will be added on project_doc, thus AI will again evaluate gantt chart.
+        assinging a memeber means assigning the member to the github ticket(the task in our system)
+    Automation: 
+        - when a project is created by manager, manager will click on "Evaluate Project" button which will trigger the first AI step. and AI will also suggest project managers
+        for assigning to the project based on project manager's performance.
+        - AI will also suggest tasks for creation on creation step. and also assignees.
+        - project manager when creating task(task creation meaning creating a github ticket), AI will suggest members for assigning to the task based on task performance of the employees.
+        - whenever task gets updated by either it is completed or due (based on statuses) or features are updated on project_doc, AI will automatically re-evaluate the gantt chart.
+        - whenever task is created, a new tasks.task_progress_doc will be also created by AI which will include what to be done in detailed steps and also completion status.
+        - weekly automation: from tasks.task_progress_doc, AI will evaluate from those docs from db and will update project project_progress_doc.
+
+        - when codes are pushed on tasks to repo, obviously github will trigger ci/cd***, so we have to implement ci/cd to trigger our server and notify if cd is done successfully, then AI will auto update the task**** status.
+        so member can not mark a task done. but project manager can because ci/cd is also a task which can not be marked as done as it is before the ci/cd system trigger which performs AI action to update the task status.
+
+
+*** ci/cd implementation is also a task.
+**** a push can also contain multiple task, so we have mark accordingly.
+
+
+rest of the features:
+    - task due notification
+    - assignemnt notifcaion
+    - completion notification as completion is marked by system
+    - discussion feature per task (between task assignees and assigner)
