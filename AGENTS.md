@@ -1,0 +1,294 @@
+# AGENTS.md — TRACE
+
+> Read this first, every session. Then read [`docs/PROJECT.md`](docs/PROJECT.md).
+
+---
+
+## ⚠️ The one rule that is never optional
+
+**Every time you implement, modify, or remove a feature, you MUST update the
+documentation in the same change.** Not afterwards, not in a follow-up, not "when
+it settles" — in the same change, before you report the work as done.
+
+Code and docs drift apart in one commit and take ten to reconcile. These documents
+are the only thing telling the next agent what this system is supposed to be; a doc
+that lies is worse than no doc, because it will be believed.
+
+**What to update, every time:**
+
+| You did this | Update this |
+|--------------|-------------|
+| Implemented, reworked or removed a feature | [`docs/PROJECT.md`](docs/PROJECT.md) §24 — flip its status (✅ 🔄 🔲 ❌ 💤) |
+| Added, changed or removed a table or column | [`docs/PROJECT.md`](docs/PROJECT.md) Part 2 |
+| Added, changed or removed an endpoint | §2 of this file, and [`docs/PROJECT.md`](docs/PROJECT.md) §24 |
+| Changed a route, page or panel | [`docs/PROJECT.md`](docs/PROJECT.md) Part 3 |
+| Changed anything about the AI pipeline, Gantt, project documents or completion | [`docs/CORE.md`](docs/CORE.md) — **this one first, before writing the code** |
+| Completed phase work | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) |
+| Made a non-obvious decision, or chose between two reasonable designs | [`docs/PLANNING.md`](docs/PLANNING.md) §2 (decision) and §5 (agent log) — say what you chose **and why it was not the obvious choice** |
+| Answered, or newly discovered, an open question | [`docs/PLANNING.md`](docs/PLANNING.md) §6 |
+| Rejected an approach after considering it | [`docs/PLANNING.md`](docs/PLANNING.md) §4, so nobody re-proposes it |
+| Changed setup, commands, ports or user-facing behaviour | [`README.md`](README.md) |
+| Established a new convention or hit a trap worth naming | This file, §4 or §7 |
+
+**If a change makes a document wrong, fixing that document is part of the task —
+not a separate one.** If the spec itself needs to change, change the spec *first*,
+then write code to match it. Never let the code silently redefine the design.
+
+A task is not complete until the docs describe what the code now does.
+
+---
+
+## 0. Before you write any code
+
+1. **[`docs/PROJECT.md`](docs/PROJECT.md) is authoritative.** If the codebase, a
+   comment, or your memory of this project contradicts it, they are what is wrong.
+2. **If the task touches AI, the Gantt, project documents, or task completion,
+   read [`docs/CORE.md`](docs/CORE.md) in full first.** That is the core feature and
+   it has rules that override normal judgement.
+3. **Check [`docs/PLANNING.md`](docs/PLANNING.md) §6** for open questions in your
+   area. Each states the assumption currently in force — build to it, do not
+   silently invent a different one.
+4. **A large part of the current code is scheduled for removal.**
+   [`docs/PROJECT.md`](docs/PROJECT.md) §24 marks it ❌. Do not extend or polish it.
+5. **Never drop a table without confirmation.** In particular the workforce record
+   set — `attendance` and `work_schedules` included — is **retained** and
+   Admin-owned. Only its UI was removed.
+
+6. **Documentation is part of every change** — see the rule at the top of this
+   file. Work that ships without its doc update is not finished.
+
+### Document map
+| File | Purpose |
+|------|---------|
+| `AGENTS.md` | **This file** — conventions, stack, API map, patterns |
+| [`README.md`](README.md) | End-user overview and setup |
+| [`docs/PROJECT.md`](docs/PROJECT.md) | What TRACE is: roles, panels, schema, UI, feature status |
+| [`docs/CORE.md`](docs/CORE.md) | The AI automation system — the core feature |
+| [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Build phases 0–9 |
+| [`docs/PLANNING.md`](docs/PLANNING.md) | Journey, decisions, rejected concepts, deferred work, open questions |
+
+---
+
+## 1. Tech stack
+
+| Layer | Technology |
+|-------|-----------|
+| Frontend | Vite + React (JSX) |
+| UI | shadcn/ui — preset `b1tNnRXF5` (`base-mira`) |
+| CSS | Tailwind CSS v4, OKLCH design tokens only |
+| Icons | `lucide-react` **only** |
+| Toasts | `sonner` |
+| Backend | FastAPI + async SQLAlchemy 2.0 + Pydantic V2 |
+| Database | PostgreSQL, Alembic migrations |
+| Queue | Redis + Celery 5 (worker + beat) |
+| Object storage | MinIO — project source files |
+| Document storage | GitHub repo files — all generated markdown |
+| Mail | Mailpit SMTP |
+| AI | OpenAI SDK; model and credentials from `system_settings`, `.env` fallback |
+| Auth | JWT access token in `localStorage` |
+
+---
+
+## 2. API surface
+
+Base URL `http://localhost:8000/api/v1`, proxied by Vite.
+
+### To build
+
+| Module | Prefix | Purpose |
+|--------|--------|---------|
+| Projects | `/projects` | CRUD, source files, evaluate, assignments, documents |
+| Task groups | `/projects/{id}/task-groups` | Gantt modules |
+| Tasks | `/projects/{id}/tasks` | Scoped CRUD, assignment, completion |
+| Gantt | `/projects/{id}/gantt` | Latest chart + version history |
+| Discussions | `/tasks/{id}/discussions` | Per-task threads |
+| Notifications | `/notifications` | List, mark read, unread count |
+| Settings | `/admin/settings` | `system_settings` CRUD + connection tests |
+| Webhooks | `/webhooks/cicd` | HMAC-signed CI/CD receiver |
+
+```
+POST  /projects                              create (Manager)
+POST  /projects/{id}/source-files            multi-file upload → MinIO
+POST  /projects/{id}/evaluate                enqueue evaluate_project
+GET   /projects/{id}/evaluate/status         job state
+POST  /projects/{id}/assignments             assign Project Manager
+GET   /projects/{id}/suggest-managers        AI-ranked PM candidates
+GET   /projects/{id}/tree                    graph payload
+GET   /projects/{id}/gantt                   latest chart version
+PUT   /projects/{id}/doc                     edit project_doc → triggers re-eval
+POST  /projects/{id}/tasks                   create task + GitHub issue
+GET   /projects/{id}/tasks/suggest-assignees AI-ranked Members
+PATCH /tasks/{id}/status                     completion authority enforced HERE
+POST  /webhooks/cicd                         CI/CD → AI completion resolution
+```
+
+### Keep
+
+| Module | Prefix | File |
+|--------|--------|------|
+| Auth | `/auth` | `api/v1/auth.py` |
+| Users | `/users` | `api/v1/users.py` |
+| Employees + designations | `/employees` | `api/v1/employees.py` |
+| HRMS (leaves, holidays, bulk upload) | `/hrms` | `api/v1/hrms.py` |
+| Attendance + shifts **records** (Admin) | `/attendance`, `/hrms` | Re-homed under Workforce |
+| Admin all-tables CRUD | `/admin` | `api/v1/admin.py` |
+| Services / health / WS / MinIO / mail / LLM | `/services` | `api/v1/services.py` |
+
+### Remove
+
+| Endpoint | Why |
+|----------|-----|
+| `/attendance` clock-in / clock-out / geo-fence | No employee HR self-service. The **read + CRUD** endpoints stay |
+| `/master/roles`, `/master/menus`, `/master/menu-permissions` | Dynamic roles and matrix removed |
+| `/tasks/groups/*` | Group chat replaced by discussions |
+| `/tasks/tree/hierarchy`, `/tasks/{id}/evaluate-tree` | Infinite tree removed |
+| `/tasks/disputes*`, `/tasks/overallocations` | Deferred |
+
+---
+
+## 3. Frontend structure
+
+```
+frontend/src/
+  layouts/
+    AdminLayout.jsx        ← sidebar shell, static menu
+    ManagerLayout.jsx      ← topbar only + project selector
+    EmployeeLayout.jsx     ← topbar only + project selector
+  components/
+    ui/                    ← shadcn-generated, NEVER hand-edit
+    ProjectSelector.jsx
+    ProjectTreeGraph.jsx
+    GanttChart.jsx
+    NotificationBell.jsx
+    ServiceMonitor.jsx
+  pages/
+    LandingPage.jsx · LoginPage.jsx · ForbiddenPage.jsx
+    admin/    ControlPanelPage · WorkforcePage · MonitorPage · ConfigurationPage · ReportsPage
+    manager/  ManagerDashboardPage · ProjectCreatePage · ProjectDetailPage
+    employee/ EmployeeDashboardPage · ProjectDetailPage · TaskDetailPage
+  contexts/
+    AuthContext.jsx        ← JWT + platform role
+    ProjectContext.jsx     ← selected project + caller's project role
+    ThemeContext.jsx
+  api/                     ← one module per backend router
+```
+
+---
+
+## 4. Non-negotiable conventions
+
+**Backend**
+- Every LLM call is a Celery task. A route enqueues and returns a job id; it never
+  awaits the model.
+- Every LLM response is validated against a declared JSON schema. Retry on parse
+  failure; never persist unvalidated output.
+- Authorisation is two-layer: platform role on the route, then project role via
+  `project_assignments`. Never rely on the frontend to hide a capability.
+- **Completion authority is enforced in the API layer.** A Member calling
+  `PATCH /tasks/{id}/status` with `Completed` gets a 403, always.
+  ([`docs/CORE.md`](docs/CORE.md) §7)
+- Schema changes ship as Alembic revisions, one concern per revision.
+- Celery tasks must be registered — `imports=["app.tasks"]` in `celery_app.py`, or
+  discovery silently fails.
+
+**Frontend**
+- `lucide-react` icons only. No `react-icons`.
+- shadcn components and Tailwind tokens only. No glassmorphism, no raw colour
+  utilities (`text-violet-400`, `bg-white/10`), no custom CSS files.
+- `components/ui/**` is generated — never hand-edit it.
+- Every page responsive and correct in both themes.
+
+---
+
+## 5. Patterns
+
+### Page shell
+```jsx
+<div id="page-id" className="space-y-6 max-w-[1400px]">
+  <div className="flex items-center justify-between">
+    <div>
+      <h1 className="text-2xl font-bold tracking-tight">Page Title</h1>
+      <p className="text-sm text-muted-foreground">Subtitle</p>
+    </div>
+    <Button onClick={refresh} variant="outline" size="icon"><RefreshCw /></Button>
+  </div>
+</div>
+```
+
+### Role-guarded route
+```jsx
+<Route element={<RoleRoute role="Manager"><ManagerLayout /></RoleRoute>}>
+  <Route path="/manager" element={<ManagerDashboardPage />} />
+  <Route path="/manager/projects/:id" element={<ProjectDetailPage />} />
+</Route>
+```
+
+### Enqueue-and-poll — every AI action
+Celery job results are polled via `GET /api/v1/services/task/{job_id}/result`
+(~1.5s interval), the same mechanism the Service Monitor uses.
+```jsx
+const { data } = await projectsApi.evaluate(projectId)   // → { job_id }
+const poll = setInterval(async () => {
+  const { data: s } = await projectsApi.evaluateStatus(projectId)
+  if (s.state === 'SUCCESS') { clearInterval(poll); refresh(); toast.success('Project evaluated') }
+  if (s.state === 'FAILURE') { clearInterval(poll); toast.error(s.error) }
+}, 1500)
+```
+
+---
+
+## 6. Commands
+
+```bash
+./start.sh start     # full stack
+./start.sh stop
+./start.sh restart
+./start.sh migrate   # alembic
+./start.sh status
+
+cd frontend && npm run dev
+cd backend && source .venv/bin/activate && uvicorn app.main:app --reload --port 8000
+```
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Frontend | http://localhost:5173 | `admin@trace.com` / `Admin@123` |
+| API docs | http://localhost:8000/docs | — |
+| pgAdmin | http://localhost:5050 | `admin@trace.com` / `Admin@123` |
+| Mailpit | http://localhost:8025 | — |
+| MinIO console | http://localhost:9001 | `minioadmin` / `minioadmin` |
+
+---
+
+## 7. Anti-patterns
+
+```jsx
+// ❌ never
+import { MdDashboard } from 'react-icons/md'
+<div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-xl">
+<span className="text-violet-400 bg-violet-500/20">
+
+// ✅ always
+import { LayoutDashboard } from 'lucide-react'
+<Card><CardContent>…</CardContent></Card>
+<Badge variant="secondary">label</Badge>
+```
+
+```python
+# ❌ never — blocks the request, unparseable output
+result = await openai.chat.completions.create(...)
+return {"text": result.choices[0].message.content}
+
+# ✅ always — queued, schema-validated
+job = evaluate_project.delay(project_id)
+return {"job_id": job.id}
+```
+
+```python
+# ❌ never — trusts the client about who may complete a task
+task.status = payload.status
+
+# ✅ always — authority enforced server-side
+if payload.status == "Completed" and not caller_may_complete(user, task):
+    raise HTTPException(403, "Completion is confirmed by CI/CD or the Project Manager")
+```
