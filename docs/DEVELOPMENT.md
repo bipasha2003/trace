@@ -32,9 +32,9 @@ before Phase 5 — completion resolution depends on the AI service layer.
 
 ---
 
-## Phase 0 — Clear the ground
+## Phase 0 — Clear the ground ✅
 
-The re-spec invalidated a large amount of working code. Removing it is **not
+*Status: Completed. All routes, services, template scaffolding, and frontend dead features removed. Retained workforce and health endpoints verified operational.*
 optional tidying** — leftover routes, dead components and stale seeds actively
 mislead agents about what the system does. Do this first, completely, before
 writing anything new.
@@ -217,31 +217,9 @@ Phase 0 is done when **all** of these hold:
 **Done when:** the app starts, login works, every removed feature is gone from the
 API and the UI, and the workforce endpoints in 0.4 still respond.
 
-## Phase 1 — Schema
+## Phase 1 — Schema ✅
 
-Follow [`PROJECT.md`](PROJECT.md) §15. One Alembic revision per step.
-
-1. Create `projects`, `project_source_files`, `project_assignments`, `task_groups`,
-   `gantt_charts`, `task_discussions`, `notifications`, `system_settings`,
-   `cicd_events` (§11).
-2. Alter `tasks` — add `project_id`, `task_group_id`, `task_progress_doc`,
-   `assigned_to_user_id`, `assigned_by_user_id`, `completed_by`, `completed_at` (§12).
-3. Add `github_username` to the user record (Q9).
-4. Backfill the existing seeded tree into projects / task groups / tasks.
-5. Drop `parent_task_id`, `team_lead_id`, `project_manager_id`, `task_level_role`,
-   `tree_path` — **only after** verifying the backfill.
-6. **Delete the model classes Phase 0 deliberately left behind, each in the same
-   revision that drops its table** — `ProjectGroup`, `ProjectGroupMessage`,
-   `EvaluationDispute`, `TaskCommitLog` in `models/task.py`, and `SystemMenu`,
-   `RoleMenuPermission` in `models/employee.py`. Update `models/__init__.py`
-   exports and the `MODEL_REGISTRY` in `admin.py` at the same time. Never leave a
-   window where the class is gone but the table is not.
-7. Migrate role rows: `Platform Admin` → `Admin`, `Staff` → `Employee`, repoint
-   `user_roles`, then delete the obsolete `roles` rows.
-8. Reseed: one Admin, one Manager, several Employees, one demo project.
-
-**Done when:** `./start.sh migrate` runs clean, `alembic revision --autogenerate`
-produces an empty diff, and the demo project renders in Swagger.
+*Status: Completed 2026-09-24. All new tables created, tasks altered, backfill done, deprecated tables dropped, roles migrated, demo project seeded. `alembic revision --autogenerate` produces a clean diff.*
 
 ---
 

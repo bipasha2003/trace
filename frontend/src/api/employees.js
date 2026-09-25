@@ -44,4 +44,17 @@ export const employeesApi = {
   /** DELETE /departments/:id */
   deleteDepartment: (id) =>
     api.delete(`/departments/${id}`),
+
+  // ── Designations ──
+  /** GET /designations */
+  getDesignations: () =>
+    api.get('/designations'),
+
+  /** POST /designations */
+  createDesignation: (data) =>
+    api.post('/designations', data),
+
+  /** DELETE /designations/:id */
+  deleteDesignation: (id) =>
+    api.delete(`/designations/${id}`),
 }

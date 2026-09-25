@@ -93,37 +93,10 @@ export default function AttendancePage() {
     fetchData()
   }, [])
 
-  const handleCheckIn = async () => {
-    setCheckingIn(true)
-    try {
-      let lat = 12.9716, lng = 77.5946
-      try {
-        const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 4000 }))
-        lat = pos.coords.latitude
-        lng = pos.coords.longitude
-      } catch {}
-      await attendanceApi.checkIn(lat, lng)
-      toast.success('Clock-in recorded successfully!')
-      fetchData()
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Clock-in failed')
-    } finally {
-      setCheckingIn(false)
-    }
-  }
-
-  const handleCheckOut = async () => {
-    setCheckingOut(true)
-    try {
-      await attendanceApi.checkOut()
-      toast.success('Clock-out recorded successfully!')
-      fetchData()
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Clock-out failed')
-    } finally {
-      setCheckingOut(false)
-    }
-  }
+  // NOTE: Employee clock-in/out removed — endpoint removed in Phase 0 cleanup.
+  // AttendancePage is being rebuilt in Phase 2 (Admin workforce panel).
+  const handleCheckIn = () => { toast.info('Clock-in is no longer available from this interface.') }
+  const handleCheckOut = () => { toast.info('Clock-out is no longer available from this interface.') }
 
   const handleAssignShift = async (e) => {
     e.preventDefault()

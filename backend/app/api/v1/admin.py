@@ -1,7 +1,7 @@
 """
 TRACE — Admin Panel API Router
 Provides comprehensive dynamic CRUD operations across all database tables
-for Platform Admins and System Administrators.
+for System Administrators.
 """
 
 import datetime
@@ -20,14 +20,11 @@ from app.models.employee import (
     Designation,
     Employee,
     EmployeeDetail,
-    RoleMenuPermission,
     WorkSchedule,
 )
 from app.models.hrms import Holiday, Leave
 from app.models.productivity import ProductivityScore
 from app.models.task import (
-    ProjectGroup,
-    ProjectGroupMessage,
     Task,
     TaskComment,
     TaskDetail,
@@ -35,43 +32,66 @@ from app.models.task import (
     TaskType,
 )
 from app.models.user import Profile, Role, User, UserRole
+from app.models.project import (
+    Project,
+    ProjectSourceFile,
+    ProjectAssignment,
+    TaskGroup,
+    GanttChart,
+    TaskDiscussion,
+    Notification,
+    SystemSetting,
+    CicdEvent,
+)
 
 router = APIRouter()
 
 # Map of table name string -> SQLAlchemy Model Class
 MODEL_REGISTRY: Dict[str, Dict[str, Any]] = {
+    # Core Auth & Users
     "users": {"model": User, "display_name": "Users", "category": "Core Auth & Users"},
     "profiles": {"model": Profile, "display_name": "Profiles", "category": "Core Auth & Users"},
     "roles": {"model": Role, "display_name": "Roles", "category": "Core Auth & Users"},
     "user_roles": {"model": UserRole, "display_name": "User Roles", "category": "Core Auth & Users"},
+    # HR & Workforce
     "employees": {"model": Employee, "display_name": "Employees", "category": "HR & Workforce"},
     "employee_details": {"model": EmployeeDetail, "display_name": "Employee Details", "category": "HR & Workforce"},
     "departments": {"model": Department, "display_name": "Departments", "category": "HR & Workforce"},
     "designations": {"model": Designation, "display_name": "Designations", "category": "HR & Workforce"},
     "work_schedules": {"model": WorkSchedule, "display_name": "Work Schedules", "category": "HR & Workforce"},
-    "role_menu_permissions": {"model": RoleMenuPermission, "display_name": "Role Permissions", "category": "HR & Workforce"},
+    # Attendance & Schedules
     "attendance": {"model": Attendance, "display_name": "Attendance Records", "category": "Attendance & Schedules"},
     "time_zones": {"model": TimeZone, "display_name": "Time Zones", "category": "Attendance & Schedules"},
     "leaves": {"model": Leave, "display_name": "Leave Requests", "category": "Attendance & Schedules"},
     "holidays": {"model": Holiday, "display_name": "Holidays", "category": "Attendance & Schedules"},
+    # Tasks & Projects
     "tasks": {"model": Task, "display_name": "Tasks", "category": "Tasks & Projects"},
     "task_types": {"model": TaskType, "display_name": "Task Types", "category": "Tasks & Projects"},
     "task_details": {"model": TaskDetail, "display_name": "Task Details", "category": "Tasks & Projects"},
     "task_comments": {"model": TaskComment, "display_name": "Task Comments", "category": "Tasks & Projects"},
     "task_time_logs": {"model": TaskTimeLog, "display_name": "Task Time Logs", "category": "Tasks & Projects"},
-    "project_groups": {"model": ProjectGroup, "display_name": "Project Groups", "category": "Tasks & Projects"},
-    "project_group_messages": {"model": ProjectGroupMessage, "display_name": "Project Group Messages", "category": "Tasks & Projects"},
+    # Projects (Phase-1 new)
+    "projects": {"model": Project, "display_name": "Projects", "category": "Tasks & Projects"},
+    "project_source_files": {"model": ProjectSourceFile, "display_name": "Project Source Files", "category": "Tasks & Projects"},
+    "project_assignments": {"model": ProjectAssignment, "display_name": "Project Assignments", "category": "Tasks & Projects"},
+    "task_groups": {"model": TaskGroup, "display_name": "Task Groups", "category": "Tasks & Projects"},
+    "gantt_charts": {"model": GanttChart, "display_name": "Gantt Charts", "category": "Tasks & Projects"},
+    "task_discussions": {"model": TaskDiscussion, "display_name": "Task Discussions", "category": "Tasks & Projects"},
+    "notifications": {"model": Notification, "display_name": "Notifications", "category": "Tasks & Projects"},
+    "cicd_events": {"model": CicdEvent, "display_name": "CI/CD Events", "category": "Tasks & Projects"},
+    # AI & System
     "productivity_scores": {"model": ProductivityScore, "display_name": "Productivity Scores", "category": "AI & System"},
+    "system_settings": {"model": SystemSetting, "display_name": "System Settings", "category": "AI & System"},
 }
 
 
 def require_admin(user: User = Depends(get_current_user)) -> User:
-    """Dependency enforcing that current user has Platform Admin or Admin role."""
+    """Dependency enforcing that current user has the Admin role."""
     user_roles = [ur.role.role_name for ur in user.user_roles if ur.role]
-    if "Platform Admin" not in user_roles and "Admin" not in user_roles:
+    if "Admin" not in user_roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied. Admin or Platform Admin role required.",
+            detail="Access denied. Admin role required.",
         )
     return user
 

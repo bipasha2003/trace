@@ -378,12 +378,12 @@ def llm_chat_task(self, message: str, model: str = None):
 def compute_task_health_and_escalate(self):
     """
     Computes risk score (Green/Yellow/Red) per task node and rolls up worst health to parent tasks.
-    Triggers auto-escalation emails via Mailpit if health is Red.
+    Health is on-demand only; auto-escalation is deferred (see PLANNING.md 00a73.2).
     """
     async def _compute():
         from sqlalchemy import select
         from app.database import async_session_factory
-        from app.models.task import Task, ProjectGroup, ProjectGroupMessage
+        from app.models.task import Task
         from app.models.employee import Employee
 
         today = date.today()
@@ -402,8 +402,6 @@ def compute_task_health_and_escalate(self):
                 task_map = {t.id: t for t in tasks}
 
                 updated_count = 0
-                escalations_sent = 0
-
                 for t in tasks:
                     health = "Green"
                     reasons = []
@@ -417,22 +415,6 @@ def compute_task_health_and_escalate(self):
                             if health != "Red":
                                 health = "Yellow"
                             reasons.append("Due today")
-
-                    # 2. Check group chat for blocker keywords
-                    pg_res = await db.execute(select(ProjectGroup.id).where(ProjectGroup.task_id == t.id))
-                    pg_id = pg_res.scalar()
-                    if pg_id:
-                        msg_res = await db.execute(
-                            select(ProjectGroupMessage.message)
-                            .where(ProjectGroupMessage.group_id == pg_id)
-                            .order_by(ProjectGroupMessage.id.desc())
-                            .limit(5)
-                        )
-                        msgs = msg_res.scalars().all()
-                        blocker_keywords = ["blocker", "stuck", "bug", "delay", "failed", "critical"]
-                        if any(any(kw in m.lower() for kw in blocker_keywords) for m in msgs):
-                            health = "Red"
-                            reasons.append("Blocker/issue reported in project chat")
 
                     t.health_score = health
                     t.health_reason = "; ".join(reasons) if reasons else "On track"
@@ -450,28 +432,11 @@ def compute_task_health_and_escalate(self):
                             parent.health_score = "Yellow"
                             parent.health_reason = f"Subtask #{t.id} ({t.title}) is Yellow"
 
-                # 4. Auto-Escalation Engine: Trigger Mailpit email for Red tasks
-                for t in tasks:
-                    if t.health_score == "Red":
-                        # Find recipient (Team Lead or Project Manager or Assignee)
-                        target_id = t.team_lead_id or t.project_manager_id or t.assigned_to
-                        if target_id:
-                            emp_res = await db.execute(select(Employee).where(Employee.id == target_id))
-                            emp = emp_res.scalar()
-                            if emp and emp.email:
-                                send_mail_task.delay(
-                                    to_email=emp.email,
-                                    subject=f"[AUTO-ESCALATION] Task Risk Alert: {t.title} is RED",
-                                    body=f"Task #{t.id} '{t.title}' has been flagged as RED RISK.\nReason: {t.health_reason}\nDue Date: {t.due_date}\nPlease review and take corrective action."
-                                )
-                                escalations_sent += 1
-
                 await db.commit()
                 return {
                     "status": "success",
                     "tasks_checked": len(tasks),
                     "tasks_updated": updated_count,
-                    "escalations_sent": escalations_sent,
                 }
             except Exception as e:
                 await db.rollback()
@@ -480,55 +445,4 @@ def compute_task_health_and_escalate(self):
 
     return _run_async(_compute())
 
-
-# ══════════════════════════════════════════════════════════════════
-#  TASK 8: Cross-Tree Overallocation Detection (Beat)
-# ══════════════════════════════════════════════════════════════════
-
-@celery_app.task(name="app.tasks.detect_overallocation", bind=True, max_retries=2)
-def detect_overallocation(self):
-    """
-    Scans active assignments across all infinite task subtrees.
-    Flags employees assigned to > 3 active tasks or > 40 estimated hours.
-    """
-    async def _detect():
-        from sqlalchemy import select, func
-        from app.database import async_session_factory
-        from app.models.task import Task
-        from app.models.employee import Employee
-
-        async with async_session_factory() as db:
-            try:
-                res = await db.execute(
-                    select(
-                        Task.assigned_to,
-                        func.count(Task.id).label("active_task_count"),
-                        func.sum(Task.estimated_hours).label("total_hours")
-                    )
-                    .where(
-                        Task.assigned_to.isnot(None),
-                        Task.status.in_(["Pending", "WIP", "Review"]),
-                        Task.deleted_at.is_(None)
-                    )
-                    .group_by(Task.assigned_to)
-                )
-                conflicts = []
-                for row in res.all():
-                    emp_id, task_count, total_hrs = row
-                    if task_count > 3 or (total_hrs and float(total_hrs) > 40):
-                        emp_res = await db.execute(select(Employee.name).where(Employee.id == emp_id))
-                        emp_name = emp_res.scalar() or f"Employee #{emp_id}"
-                        conflicts.append({
-                            "employee_id": emp_id,
-                            "employee_name": emp_name,
-                            "active_task_count": task_count,
-                            "total_estimated_hours": float(total_hrs or 0),
-                            "conflict_reason": "High workload across multiple task trees"
-                        })
-                return {"status": "success", "workload_conflicts": conflicts}
-            except Exception as e:
-                logger.error(f"[detect_overallocation] Failed: {e}")
-                raise self.retry(exc=e, countdown=60)
-
-    return _run_async(_detect())
 

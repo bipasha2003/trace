@@ -1,6 +1,7 @@
 """
 TRACE - Task Management Models
-Tables: tasks, task_types, task_details, task_comments, task_time_logs
+Tables: tasks, task_types, task_details, task_comments, task_time_logs,
+        task_discussions (see project.py)
 """
 
 from datetime import date, datetime
@@ -33,26 +34,47 @@ class TaskType(BaseModelMixin, Base):
 
 class Task(BaseModelMixin, Base):
     """
-    tasks table — core task entity with assignment and tracking.
-    Status: WIP, Review, Completed, Failed, Cancelled
+    tasks table — core task entity; a task is a GitHub issue (1:1).
+    Status: Pending, In Progress, In Review, Completed, Blocked, Overdue, Cancelled
     Priority: Low, Medium, High, Critical
+
+    Phase-1 adds:
+      project_id, task_group_id, task_progress_doc,
+      assigned_to_user_id, assigned_by_user_id, completed_by, completed_at
+
+    Old tree columns (parent_task_id, team_lead_id, project_manager_id,
+    task_level_role, tree_path) are retained until Phase-1 step 5 drops them
+    after backfill verification.
     """
 
     __tablename__ = "tasks"
 
+    # ── Phase-1 new columns ─────────────────────────────────────
+    project_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("projects.id"), nullable=True
+    )
+    task_group_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("task_groups.id"), nullable=True
+    )
+    task_progress_doc: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    assigned_to_user_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("users.id"), nullable=True
+    )
+    assigned_by_user_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("users.id"), nullable=True
+    )
+    completed_by: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )  # 'AI/CICD' | 'Project Manager'
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # ── Retained columns ─────────────────────────────────────────
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     type_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("task_types.id"), nullable=True
-    )
-    assigned_to: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("employees.id"), nullable=True
-    )
-    assigned_by: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("employees.id"), nullable=True
-    )
-    parent_task_id: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("tasks.id"), nullable=True
     )
     priority: Mapped[str] = mapped_column(
         String(20), default="Medium", nullable=False
@@ -62,45 +84,35 @@ class Task(BaseModelMixin, Base):
     due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     status: Mapped[str] = mapped_column(
         String(20), default="Pending", nullable=False
-    )  # Pending, WIP, Review, Completed, Failed, Cancelled, Delayed
-
-    project_manager_id: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("employees.id"), nullable=True
-    )
-    team_lead_id: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("employees.id"), nullable=True
-    )
-    task_level_role: Mapped[str] = mapped_column(
-        String(50), default="Member", nullable=False
-    )  # Project Manager, Team Lead, Member
+    )  # Pending, In Progress, In Review, Completed, Blocked, Overdue, Cancelled
     github_issue_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     github_issue_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     commit_verified: Mapped[bool] = mapped_column(default=False, nullable=False)
     commit_hash: Mapped[str | None] = mapped_column(String(100), nullable=True)
     llm_verification_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    tree_path: Mapped[str | None] = mapped_column(String(100), nullable=True)
     health_score: Mapped[str] = mapped_column(String(20), default="Green", nullable=False)  # Green, Yellow, Red
     health_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_health_check: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # ── Relationships ────────────────────────────────────────────
     task_type: Mapped[TaskType | None] = relationship("TaskType", back_populates="tasks")
-    assignee: Mapped["Employee | None"] = relationship(
-        "Employee", foreign_keys=[assigned_to], back_populates="assigned_tasks"
+    # New project-model relationships
+    project: Mapped["Project | None"] = relationship(
+        "Project", foreign_keys=[project_id], back_populates=None
     )
-    assigner: Mapped["Employee | None"] = relationship(
-        "Employee", foreign_keys=[assigned_by], back_populates="created_tasks"
+    task_group: Mapped["TaskGroup | None"] = relationship(
+        "TaskGroup", foreign_keys=[task_group_id], back_populates="tasks"
     )
-    project_manager: Mapped["Employee | None"] = relationship(
-        "Employee", foreign_keys=[project_manager_id]
+    assigned_to_user: Mapped["User | None"] = relationship(
+        "User", foreign_keys=[assigned_to_user_id]
     )
-    team_lead: Mapped["Employee | None"] = relationship(
-        "Employee", foreign_keys=[team_lead_id]
+    assigned_by_user: Mapped["User | None"] = relationship(
+        "User", foreign_keys=[assigned_by_user_id]
     )
-    parent_task: Mapped["Task | None"] = relationship(
-        "Task", remote_side="Task.id", back_populates="sub_tasks"
+    discussions: Mapped[list["TaskDiscussion"]] = relationship(
+        "TaskDiscussion", back_populates="task", cascade="all, delete-orphan"
     )
-    sub_tasks: Mapped[list["Task"]] = relationship("Task", back_populates="parent_task")
+    # Legacy employee-based assignment comments (no FK columns — dropped in Phase-1)
     task_detail: Mapped["TaskDetail | None"] = relationship(
         "TaskDetail", back_populates="task", uselist=False
     )
@@ -189,83 +201,7 @@ class TaskTimeLog(BaseModelMixin, Base):
         return f"<TaskTimeLog(id={self.id}, task_id={self.task_id}, active_min={self.active_minutes})>"
 
 
-class ProjectGroup(BaseModelMixin, Base):
-    """
-    project_groups table — auto-created chat groups based on Task Tree hierarchy.
-    """
-
-    __tablename__ = "project_groups"
-
-    task_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("tasks.id"), nullable=False
-    )
-    group_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    # ── Relationships ────────────────────────────────────────────
-    task: Mapped[Task] = relationship("Task")
-    messages: Mapped[list["ProjectGroupMessage"]] = relationship(
-        "ProjectGroupMessage", back_populates="group", cascade="all, delete-orphan"
-    )
-
-
-class ProjectGroupMessage(BaseModelMixin, Base):
-    """
-    project_group_messages table — chat messages with tree-based tagging rule enforcement.
-    """
-
-    __tablename__ = "project_group_messages"
-
-    group_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("project_groups.id"), nullable=False
-    )
-    sender_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("employees.id"), nullable=False
-    )
-    sender_name: Mapped[str] = mapped_column(String(150), nullable=False)
-    sender_role: Mapped[str] = mapped_column(String(50), default="Member", nullable=False)  # Project Manager, Team Lead, Member
-    tagged_role: Mapped[str | None] = mapped_column(String(50), nullable=True)  # @ProjectManager, @TeamLead, @ParentTeam, @Members
-    message: Mapped[str] = mapped_column(Text, nullable=False)
-
-    # ── Relationships ────────────────────────────────────────────
-    group: Mapped[ProjectGroup] = relationship("ProjectGroup", back_populates="messages")
-    sender: Mapped["Employee"] = relationship("Employee")
-
-
-class EvaluationDispute(BaseModelMixin, Base):
-    """
-    evaluation_disputes table — transparency and dispute workflow for AI commit verification & scores.
-    """
-
-    __tablename__ = "evaluation_disputes"
-
-    task_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tasks.id"), nullable=False)
-    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
-    dispute_type: Mapped[str] = mapped_column(String(50), default="commit_verification", nullable=False)
-    original_verdict: Mapped[str | None] = mapped_column(Text, nullable=True)
-    user_reason: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(String(20), default="Pending", nullable=False)  # Pending, Approved, Rejected
-    reviewer_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=True)
-    reviewer_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    task: Mapped[Task] = relationship("Task")
-
-
-class TaskCommitLog(BaseModelMixin, Base):
-    """
-    task_commit_logs table — longitudinal intent summaries for scope-drift tracking.
-    """
-
-    __tablename__ = "task_commit_logs"
-
-    task_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tasks.id"), nullable=False)
-    commit_hash: Mapped[str] = mapped_column(String(100), nullable=False)
-    commit_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    intent_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    structured_verification: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    task: Mapped[Task] = relationship("Task")
-
-
-# Forward reference import
+# Forward reference imports
 from app.models.employee import Employee  # noqa: E402, F401
+from app.models.project import Project, TaskGroup, TaskDiscussion  # noqa: E402, F401
+from app.models.user import User  # noqa: E402, F401

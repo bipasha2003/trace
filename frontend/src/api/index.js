@@ -10,6 +10,5 @@ export { attendanceApi } from './attendance'
 export { tasksApi } from './tasks'
 export { productivityApi } from './productivity'
 export { hrmsApi } from './hrms'
-export { masterApi } from './master'
 export { adminApi } from './admin'
 

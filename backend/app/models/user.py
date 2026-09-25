@@ -59,6 +59,7 @@ class User(BaseModelMixin, Base):
     status: Mapped[str] = mapped_column(
         String(20), default="Active", nullable=False
     )  # Active, Inactive, Blocked, Password Changed #enum
+    github_username: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     # ── Relationships ────────────────────────────────────────────
     profile: Mapped[Profile | None] = relationship(

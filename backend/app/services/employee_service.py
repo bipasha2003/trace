@@ -259,7 +259,7 @@ class EmployeeService:
                 selectinload(Employee.department),
                 selectinload(Employee.designation),
                 selectinload(Employee.work_schedule),
-                selectinload(Employee.user),
+                selectinload(Employee.user).selectinload(User.user_roles).selectinload(UserRole.role),
             )
         )
         result = await self.db.execute(stmt)
@@ -294,7 +294,7 @@ class EmployeeService:
                 selectinload(Employee.department),
                 selectinload(Employee.designation),
                 selectinload(Employee.work_schedule),
-                selectinload(Employee.user),
+                selectinload(Employee.user).selectinload(User.user_roles).selectinload(UserRole.role),
             )
         )
         result = await self.db.execute(stmt)
@@ -328,7 +328,7 @@ class EmployeeService:
                 selectinload(Employee.department),
                 selectinload(Employee.designation),
                 selectinload(Employee.work_schedule),
-                selectinload(Employee.user),
+                selectinload(Employee.user).selectinload(User.user_roles).selectinload(UserRole.role),
             )
             .order_by(Employee.created_at.desc())
             .offset(offset)

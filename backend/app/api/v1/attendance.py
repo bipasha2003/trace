@@ -1,9 +1,10 @@
 """
 TRACE - Attendance API Router
-Endpoints for check-in/out with geo-fence validation.
+Read-only and admin endpoints for attendance records.
+Clock-in/out capture has been removed (employee HR self-service is out of scope).
 """
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,7 +13,7 @@ from app.dependencies import get_current_user
 from app.exceptions import NotFoundException
 from app.models.employee import Employee
 from app.models.user import User
-from app.schemas.attendance import AttendanceResponse, AttendanceListResponse, CheckInRequest
+from app.schemas.attendance import AttendanceResponse, AttendanceListResponse
 from app.services.attendance_service import AttendanceService
 
 router = APIRouter(prefix="/attendance", tags=["Attendance"])
@@ -36,35 +37,6 @@ async def _get_employee(user: User, db: AsyncSession) -> Employee:
         await db.commit()
         await db.refresh(employee)
     return employee
-
-
-@router.post("/checkin", response_model=AttendanceResponse, summary="Check-in with GPS")
-async def check_in(
-    data: CheckInRequest,
-    request: Request,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Employee check-in with geo-fence validation."""
-    employee = await _get_employee(current_user, db)
-    ip_address = request.client.host if request.client else None
-    service = AttendanceService(db)
-    return await service.check_in(
-        employee_id=employee.id,
-        data=data,
-        ip_address=ip_address,
-    )
-
-
-@router.post("/checkout", response_model=AttendanceResponse, summary="Check-out")
-async def check_out(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Employee check-out — computes total hours."""
-    employee = await _get_employee(current_user, db)
-    service = AttendanceService(db)
-    return await service.check_out(employee_id=employee.id)
 
 
 @router.get("/history", response_model=AttendanceListResponse, summary="My attendance history")

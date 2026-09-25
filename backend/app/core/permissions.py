@@ -16,7 +16,7 @@ class RoleEnum(str, Enum):
     """Supported roles matching the roles table."""
     ADMIN = "Admin"
     MANAGER = "Manager"
-    STAFF = "Staff"
+    EMPLOYEE = "Employee"
 
 
 def require_roles(*allowed_roles: RoleEnum):
@@ -53,4 +53,4 @@ def require_roles(*allowed_roles: RoleEnum):
 
 require_admin = require_roles(RoleEnum.ADMIN)
 require_manager_or_admin = require_roles(RoleEnum.ADMIN, RoleEnum.MANAGER)
-require_any_role = require_roles(RoleEnum.ADMIN, RoleEnum.MANAGER, RoleEnum.STAFF)
+require_any_role = require_roles(RoleEnum.ADMIN, RoleEnum.MANAGER, RoleEnum.EMPLOYEE)

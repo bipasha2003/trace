@@ -20,7 +20,7 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table'
-import { employeesApi, masterApi } from '@/api'
+import { employeesApi } from '@/api'
 import { toast } from 'sonner'
 
 const STATUS_BADGE = {
@@ -58,17 +58,16 @@ export default function EmployeesPage() {
   const fetchData = async () => {
     setLoading(true)
     try {
-      const [empRes, deptRes, desigRes, rolesRes] = await Promise.all([
+      const [empRes, deptRes, desigRes] = await Promise.all([
         employeesApi.list({ per_page: 100 }).catch(() => ({ data: { employees: [], total: 0 } })),
         employeesApi.listDepartments().catch(() => ({ data: [] })),
-        masterApi.getDesignations().catch(() => ({ data: [] })),
-        masterApi.getRoles().catch(() => ({ data: { roles: [] } })),
+        employeesApi.getDesignations().catch(() => ({ data: [] })),
       ])
       setEmployees(empRes.data.employees || [])
       setTotal(empRes.data.total || 0)
       setDepartments(deptRes.data || [])
       setDesignations(desigRes.data || [])
-      setRoles(rolesRes.data?.roles || [])
+      setRoles([{ role_name: 'Admin' }, { role_name: 'Manager' }, { role_name: 'Employee' }])
     } catch (err) {
       toast.error('Failed to load employees')
     } finally {
@@ -350,7 +349,7 @@ export default function EmployeesPage() {
                     >
                       <SelectTrigger><SelectValue placeholder="Select Role" /></SelectTrigger>
                       <SelectContent>
-                        {(roles.length ? roles : [{ role_name: 'Admin' }, { role_name: 'Manager' }, { role_name: 'Team Lead' }, { role_name: 'Employee' }]).map(r => (
+                        {roles.map(r => (
                           <SelectItem key={r.role_name} value={r.role_name}>{r.role_name}</SelectItem>
                         ))}
                       </SelectContent>

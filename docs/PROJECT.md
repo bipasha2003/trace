@@ -655,37 +655,37 @@ version number and `generated_reason` so users understand why it moved.
 | Feature | Status | Notes |
 |---------|--------|-------|
 | JWT login/logout | ✅ | Token in `localStorage` via `AuthContext` |
-| Three hardcoded platform roles | 🔄 | DB seeds four; collapse to three |
+| Three hardcoded platform roles | ✅ | Collapsed to Admin, Manager, Employee |
 | Panel separation `/admin` `/manager` `/employee` | 🔲 | All roles share one shell today |
 | Public landing page at `/` | 🔲 | `/` currently redirects to `/dashboard` |
 | Guest-only + role-route guards, `/403` | 🔲 | |
 | Project-scoped authorisation | 🔲 | Via `project_assignments` |
-| Dynamic roles / menus / permission matrix | ❌ | Contradicts hardcoded roles |
+| Dynamic roles / menus / permission matrix | ❌ | Tables dropped Phase 1 |
 | User registration, profile update | ✅ | |
-| `github_username` on user | 🔲 | Required to assign issues — `PLANNING.md` Q9 |
+| `github_username` on user | ✅ | Added Phase 1; Admin + user-settings editable |
 | Token refresh, 2FA, session management | 🔲 | Unchanged backlog |
 
 ### Projects *(new core)*
 | Feature | Status | Notes |
 |---------|--------|-------|
-| `projects` table + CRUD | 🔲 | **No project entity exists today** — "project" is a root task |
-| `project_source_files` multi-upload (MinIO) | 🔲 | |
-| The four project documents | 🔲 | GitHub repo file URLs |
-| Project Manager assignment / removal | 🔲 | With AI suggestions |
+| `projects` table + CRUD | 🔲 | Table exists; CRUD endpoints in Phase 3 |
+| `project_source_files` multi-upload (MinIO) | 🔲 | Table exists; upload endpoint in Phase 3 |
+| The four project documents | 🔲 | Columns exist; population in Phase 5 |
+| Project Manager assignment / removal | 🔲 | `project_assignments` table exists; endpoint in Phase 3 |
 | Manager combined + per-project dashboards | 🔲 | |
 | Project tree graph | 🔲 | |
-| Gantt chart, versioned | 🔲 | |
+| Gantt chart, versioned | 🔲 | `gantt_charts` table exists; population in Phase 5 |
 
 ### Task groups & tasks
 | Feature | Status | Notes |
 |---------|--------|-------|
-| `task_groups` | 🔲 | |
-| Task CRUD scoped to a group | 🔄 | Exists; re-parent from tree to group |
-| Task ↔ GitHub issue 1:1 on creation | 🔄 | Manual button today; must be automatic |
-| GitHub issue assignment to Member | 🔄 | Blocked on Q9 |
-| `task_progress_doc` per task | 🔲 | |
+| `task_groups` | ✅ | Table + model created Phase 1 |
+| Task CRUD scoped to a group | 🔲 | Schema ready; endpoints in Phase 3 |
+| Task ↔ GitHub issue 1:1 on creation | 🔲 | Blocked on Q9 |
+| GitHub issue assignment to Member | 🔲 | Blocked on Q9 |
+| `task_progress_doc` per task | ✅ | Column exists; population in Phase 5 |
 | Completion authority enforcement | 🔲 | [`CORE.md`](CORE.md) §7 |
-| Per-task discussion | 🔲 | Replaces group chat |
+| Per-task discussion | ✅ | `task_discussions` table created Phase 1 |
 | Infinite tree, `Team Lead`, rotating roles | ❌ | Flattened to three levels |
 | Kanban board | 🔄 | Regroup by task group |
 | Project group chat + tagging rules | ❌ | Replaced |
@@ -708,18 +708,18 @@ version number and `generated_reason` so users understand why it moved.
 ### Notifications
 | Feature | Status | Notes |
 |---------|--------|-------|
-| `notifications` table + in-app centre | 🔲 | Header bell is UI-only today |
+| `notifications` table + in-app centre | 🔲 | Table created Phase 1; API + bell in Phase 7 |
 | Assignment / due / completion notifications | 🔲 | In-app + Mailpit |
 | Discussion reply notification | 🔲 | |
 
 ### Admin panel
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Control Panel — all-tables CRUD | ✅ | Extend to the new tables |
+| Control Panel — all-tables CRUD | ✅ | Extended to all new Phase-1 tables |
 | Workforce — full record set | 🔄 | Exists split across pages; consolidate |
 | Bulk upload on every Workforce tab | 🔄 | `/hrms/bulk-upload` exists; extend + report rejected rows |
 | Monitor page | 🔄 | Promote from header overlay |
-| Configuration via `system_settings` | 🔲 | `.env` only today |
+| Configuration via `system_settings` | 🔲 | `system_settings` table created Phase 1; UI in Phase 8 |
 | Reports | 🔲 | Placeholder — **Q7 blocks the contents** |
 
 ### Workforce (Admin-owned records)
@@ -730,8 +730,8 @@ version number and `generated_reason` so users understand why it moved.
 | Holidays | ✅ | |
 | Attendance **records** | 🔄 | Table retained; rebuilt as an Admin log |
 | Work shifts / schedules | 🔄 | Table retained; Admin-managed editor |
-| Employee clock-in/out UI, geo-fencing | ❌ | No employee HR self-service |
-| Manager's attendance & HR panel | ❌ | Removed outright |
+| Employee clock-in/out UI, geo-fencing | ❌ | Removed (routes, geolocation & UI cleared in Phase 0) |
+| Manager's attendance & HR panel | ❌ | Removed outright (cleared in Phase 0) |
 
 ### Infrastructure
 | Feature | Status | Notes |

@@ -45,6 +45,10 @@ Thumbs.db
 # ── Logs ────────────────────────────────────
 *.log
 
+# ── Runtime / PID files ─────────────────────
+.trace_pids
+*.pid
+
 # ── Docker ──────────────────────────────────
 docker-compose.override.yml
 

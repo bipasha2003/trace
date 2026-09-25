@@ -1,5 +1,7 @@
 /**
  * TRACE — Tasks API Service
+ * Removed: getTree, evaluateTree, getGroups, postGroupMessage, WebSocket group chat,
+ *          createDispute, getDisputes, reviewDispute, getOverallocations, suggestSubtasks
  */
 
 import api from './client'
@@ -20,10 +22,10 @@ export const tasksApi = {
   /** DELETE /tasks/:id */
   delete: (id) => api.delete(`/tasks/${id}`),
 
-  /** PATCH /tasks/:id/assign — assign PM/TL/Member */
+  /** PATCH /tasks/:id/assign */
   assign: (taskId, data) => api.patch(`/tasks/${taskId}/assign`, data),
 
-  /** PATCH /tasks/:id/status — update status + auto-bubble */
+  /** PATCH /tasks/:id/status */
   updateStatus: (taskId, status) => api.patch(`/tasks/${taskId}/status`, { status }),
 
   /** POST /tasks/:id/timer/start */
@@ -35,11 +37,14 @@ export const tasksApi = {
   /** POST /tasks/:id/comments */
   addComment: (taskId, comment) => api.post(`/tasks/${taskId}/comments`, { comment }),
 
-  /** GET /tasks/tree/hierarchy */
-  getTree: () => api.get('/tasks/tree/hierarchy'),
-
   /** GET /tasks/search?q=&status=&priority=&page=&per_page= */
   search: (params = {}) => api.get('/tasks/search', { params }),
+
+  /** GET /tasks/health-summary */
+  getHealthSummary: () => api.get('/tasks/health-summary'),
+
+  /** POST /tasks/:id/compute-health */
+  triggerComputeHealth: (taskId) => api.post(`/tasks/${taskId}/compute-health`),
 
   /** POST /tasks/:id/push-github */
   pushToGithub: (taskId, repoName = 'trace-org/trace-app') =>
@@ -48,24 +53,6 @@ export const tasksApi = {
   /** POST /tasks/:id/verify-commit */
   verifyCommit: (taskId, commitHash, commitMessage, diffContent = '') =>
     api.post(`/tasks/${taskId}/verify-commit`, { commit_hash: commitHash, commit_message: commitMessage, diff_content: diffContent }),
-
-  /** POST /tasks/:id/evaluate-tree */
-  evaluateTree: (taskId) => api.post(`/tasks/${taskId}/evaluate-tree`),
-
-  /** GET /tasks/groups/list */
-  getGroups: () => api.get('/tasks/groups/list'),
-
-  /** POST /tasks/groups/:id/messages */
-  postGroupMessage: (groupId, data) => api.post(`/tasks/groups/${groupId}/messages`, data),
-
-  /** Advanced Roadmap Features */
-  getTaskHealthSummary: () => api.get('/tasks/health-summary'),
-  triggerComputeHealth: (taskId) => api.post(`/tasks/${taskId}/compute-health`),
-  suggestSubtasks: (taskId) => api.post(`/tasks/${taskId}/suggest-subtasks`),
-  createDispute: (data) => api.post('/tasks/dispute', data),
-  getDisputes: (status = 'Pending') => api.get('/tasks/disputes', { params: { status } }),
-  reviewDispute: (disputeId, data) => api.patch(`/tasks/disputes/${disputeId}`, data),
-  getOverallocations: () => api.get('/tasks/overallocations'),
 }
 
 export default tasksApi

@@ -1,15 +1,14 @@
 /**
  * TRACE — App Sidebar
- * Dynamic menu permissions & role-based view controls.
+ * Static navigation. Role-based routing will be enforced in Phase 2 layouts.
+ * Dynamic roles/menus/permissions matrix removed — 3 hardcoded roles (Admin, Manager, Employee).
  */
 
-import { useState, useEffect } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard,
   Users,
   Fingerprint,
-  CheckSquare,
   Sparkles,
   FolderOpen,
   Settings,
@@ -34,17 +33,29 @@ import {
 } from '@/components/ui/sidebar'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { useAuth } from '@/contexts/AuthContext'
-import { masterApi } from '@/api'
 
-const ALL_NAV_ITEMS = [
-  { key: 'dashboard', label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, section: 'Main' },
-  { key: 'employees', label: 'Employees', path: '/employees', icon: Users, section: 'Main' },
-  { key: 'attendance', label: 'Attendance & HR', path: '/attendance', icon: Fingerprint, section: 'Main' },
-  { key: 'tasks', label: 'Tasks & Projects', path: '/tasks', icon: CheckSquare, section: 'Main' },
-  { key: 'productivity', label: 'AI Productivity', path: '/productivity', icon: Sparkles, section: 'Intelligence' },
-  { key: 'master', label: 'Master Settings', path: '/master', icon: Database, section: 'Management' },
-  { key: 'admin_panel', label: 'Admin Panel', path: '/admin', icon: Server, section: 'Management' },
-  { key: 'files', label: 'Files & Storage', path: '/files', icon: FolderOpen, section: 'Management' },
+const NAV_SECTIONS = [
+  {
+    label: 'Main',
+    items: [
+      { key: 'dashboard', label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
+      { key: 'employees', label: 'Employees', path: '/employees', icon: Users },
+      { key: 'attendance', label: 'Attendance & HR', path: '/attendance', icon: Fingerprint },
+    ],
+  },
+  {
+    label: 'Intelligence',
+    items: [
+      { key: 'productivity', label: 'AI Productivity', path: '/productivity', icon: Sparkles },
+    ],
+  },
+  {
+    label: 'Management',
+    items: [
+      { key: 'admin_panel', label: 'Admin Panel', path: '/admin', icon: Server },
+      { key: 'files', label: 'Files & Storage', path: '/files', icon: FolderOpen },
+    ],
+  },
 ]
 
 function getInitials(name) {
@@ -60,33 +71,9 @@ function getInitials(name) {
 export default function AppSidebar() {
   const location = useLocation()
   const { user, logout } = useAuth()
-  const [allowedKeys, setAllowedKeys] = useState(null)
 
   const userName = user?.name || user?.username || 'User'
   const userRole = user?.roles?.[0] || 'Employee'
-  const isAdmin = userRole === 'Platform Admin' || userRole === 'Admin'
-
-  useEffect(() => {
-    masterApi.getMyPermissions()
-      .then(res => {
-        let keys = res.data?.allowed_menus || []
-        if (isAdmin && !keys.includes('admin_panel')) {
-          keys = [...keys, 'admin_panel']
-        }
-        setAllowedKeys(keys)
-      })
-      .catch(() => setAllowedKeys(['dashboard', 'employees', 'attendance', 'tasks', 'productivity', 'master', 'files', 'admin_panel']))
-  }, [user, isAdmin])
-
-  const filteredItems = ALL_NAV_ITEMS.filter(item => {
-    if (!allowedKeys) return true
-    return allowedKeys.includes(item.key)
-  })
-
-  const sections = ['Main', 'Intelligence', 'Management'].map(sec => ({
-    label: sec,
-    items: filteredItems.filter(i => i.section === sec)
-  })).filter(sec => sec.items.length > 0)
 
   return (
     <Sidebar collapsible="icon">
@@ -111,9 +98,9 @@ export default function AppSidebar() {
 
       <SidebarSeparator />
 
-      {/* Dynamic Navigation */}
+      {/* Static Navigation */}
       <SidebarContent>
-        {sections.map((section) => (
+        {NAV_SECTIONS.map((section) => (
           <SidebarGroup key={section.label}>
             <SidebarGroupLabel>{section.label}</SidebarGroupLabel>
             <SidebarGroupContent>

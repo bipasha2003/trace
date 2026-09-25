@@ -5,7 +5,7 @@ Tables: employees, departments, work_schedules, employee_details
 
 from datetime import date, time
 
-from sqlalchemy import BigInteger, Boolean, Date, ForeignKey, Integer, String, Text, Time, UniqueConstraint
+from sqlalchemy import BigInteger, Date, ForeignKey, Integer, String, Text, Time
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -29,34 +29,6 @@ class Designation(BaseModelMixin, Base):
     def __repr__(self) -> str:
         return f"<Designation(id={self.id}, name={self.name})>"
 
-
-class RoleMenuPermission(BaseModelMixin, Base):
-    """
-    role_menu_permissions table — maps menu keys to user roles.
-    """
-
-    __tablename__ = "role_menu_permissions"
-
-    role_name: Mapped[str] = mapped_column(String(50), nullable=False)
-    menu_key: Mapped[str] = mapped_column(String(50), nullable=False)
-    is_allowed: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-
-    __table_args__ = (
-        UniqueConstraint("role_name", "menu_key", name="uq_role_menu"),
-    )
-
-
-class SystemMenu(BaseModelMixin, Base):
-    """
-    system_menus table — dynamic navigation modules/menus.
-    """
-
-    __tablename__ = "system_menus"
-
-    key: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
-    label: Mapped[str] = mapped_column(String(100), nullable=False)
-    icon: Mapped[str | None] = mapped_column(String(50), default="LayoutDashboard", nullable=True)
-    is_custom: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
 class Department(BaseModelMixin, Base):
@@ -179,12 +151,6 @@ class Employee(BaseModelMixin, Base):
     )
     attendance_records: Mapped[list["Attendance"]] = relationship(
         "Attendance", back_populates="employee"
-    )
-    assigned_tasks: Mapped[list["Task"]] = relationship(
-        "Task", foreign_keys="Task.assigned_to", back_populates="assignee"
-    )
-    created_tasks: Mapped[list["Task"]] = relationship(
-        "Task", foreign_keys="Task.assigned_by", back_populates="assigner"
     )
     task_time_logs: Mapped[list["TaskTimeLog"]] = relationship(
         "TaskTimeLog", back_populates="employee"

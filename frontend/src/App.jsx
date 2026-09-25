@@ -14,7 +14,6 @@ import TasksPage from './pages/TasksPage'
 import ProductivityPage from './pages/ProductivityPage'
 import FilesPage from './pages/FilesPage'
 import SettingsPage from './pages/SettingsPage'
-import MasterPage from './pages/MasterPage'
 import AdminPanelPage from './pages/AdminPanelPage'
 import NotFoundPage from './pages/NotFoundPage'
 
@@ -39,7 +38,6 @@ function App() {
         <Route path="/tasks" element={<TasksPage />} />
         <Route path="/productivity" element={<ProductivityPage />} />
         <Route path="/files" element={<FilesPage />} />
-        <Route path="/master" element={<MasterPage />} />
         <Route path="/admin" element={<AdminPanelPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>

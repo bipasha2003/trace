@@ -1,5 +1,5 @@
 /**
- * TRACE — Platform Admin Panel (Database Tables Management)
+ * TRACE — Admin Panel (Database Tables Management)
  * Provides dynamic CRUD management across all system database tables.
  */
 
@@ -204,7 +204,7 @@ export default function AdminPanelPage() {
             </div>
             <h1 className="text-2xl font-bold tracking-tight">Database Admin Panel</h1>
             <Badge variant="outline" className="border-primary/40 text-primary font-mono text-xs">
-              Platform Admin
+              Admin
             </Badge>
           </div>
           <p className="text-sm text-muted-foreground">
