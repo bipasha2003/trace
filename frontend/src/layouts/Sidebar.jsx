@@ -1,21 +1,19 @@
 /**
- * TRACE — App Sidebar
- * Static navigation. Role-based routing will be enforced in Phase 2 layouts.
- * Dynamic roles/menus/permissions matrix removed — 3 hardcoded roles (Admin, Manager, Employee).
+ * TRACE — Admin Sidebar
+ * Static menu, Admin-only. No permission fetch, no dynamic roles.
+ * Items per PROJECT.md §5 / §18.
  */
 
 import { NavLink, useLocation } from 'react-router-dom'
 import {
-  LayoutDashboard,
-  Users,
-  Fingerprint,
-  Sparkles,
-  FolderOpen,
-  Settings,
   Database,
-  LogOut,
+  Users,
+  Activity,
+  Settings2,
+  FileBarChart,
   Shield,
-  Server,
+  LogOut,
+  Settings,
 } from 'lucide-react'
 import {
   Sidebar,
@@ -34,32 +32,17 @@ import {
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { useAuth } from '@/contexts/AuthContext'
 
-const NAV_SECTIONS = [
-  {
-    label: 'Main',
-    items: [
-      { key: 'dashboard', label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
-      { key: 'employees', label: 'Employees', path: '/employees', icon: Users },
-      { key: 'attendance', label: 'Attendance & HR', path: '/attendance', icon: Fingerprint },
-    ],
-  },
-  {
-    label: 'Intelligence',
-    items: [
-      { key: 'productivity', label: 'AI Productivity', path: '/productivity', icon: Sparkles },
-    ],
-  },
-  {
-    label: 'Management',
-    items: [
-      { key: 'admin_panel', label: 'Admin Panel', path: '/admin', icon: Server },
-      { key: 'files', label: 'Files & Storage', path: '/files', icon: FolderOpen },
-    ],
-  },
+/** Static Admin nav — PROJECT.md §18 */
+const ADMIN_NAV = [
+  { key: 'control-panel', label: 'Control Panel', path: '/admin/control-panel', icon: Database },
+  { key: 'workforce',     label: 'Workforce',      path: '/admin/workforce',     icon: Users },
+  { key: 'monitor',       label: 'Monitor',         path: '/admin/monitor',       icon: Activity },
+  { key: 'configuration', label: 'Configuration',   path: '/admin/configuration', icon: Settings2 },
+  { key: 'reports',       label: 'Reports',          path: '/admin/reports',       icon: FileBarChart },
 ]
 
 function getInitials(name) {
-  if (!name) return 'U'
+  if (!name) return 'A'
   return name
     .split(' ')
     .map((w) => w[0])
@@ -68,16 +51,15 @@ function getInitials(name) {
     .toUpperCase()
 }
 
-export default function AppSidebar() {
+export default function AdminSidebar() {
   const location = useLocation()
   const { user, logout } = useAuth()
 
-  const userName = user?.name || user?.username || 'User'
-  const userRole = user?.roles?.[0] || 'Employee'
+  const userName = user?.name || user?.username || 'Admin'
 
   return (
     <Sidebar collapsible="icon">
-      {/* Brand Header */}
+      {/* Brand */}
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
@@ -88,7 +70,7 @@ export default function AppSidebar() {
               <div className="grid flex-1 text-left text-xs leading-tight">
                 <span className="text-sm font-semibold tracking-tight">TRACE</span>
                 <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                  <Shield className="size-2.5" /> {userRole} View
+                  <Shield className="size-2.5" /> Admin
                 </span>
               </div>
             </SidebarMenuButton>
@@ -98,48 +80,46 @@ export default function AppSidebar() {
 
       <SidebarSeparator />
 
-      {/* Static Navigation */}
+      {/* Navigation */}
       <SidebarContent>
-        {NAV_SECTIONS.map((section) => (
-          <SidebarGroup key={section.label}>
-            <SidebarGroupLabel>{section.label}</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {section.items.map((item) => {
-                  const isActive = location.pathname === item.path
-                  const Icon = item.icon
-                  return (
-                    <SidebarMenuItem key={item.path}>
-                      <SidebarMenuButton
-                        render={<NavLink to={item.path} />}
-                        isActive={isActive}
-                        tooltip={item.label}
-                      >
-                        <Icon />
-                        <span>{item.label}</span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  )
-                })}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        ))}
+        <SidebarGroup>
+          <SidebarGroupLabel>Administration</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {ADMIN_NAV.map((item) => {
+                const isActive = location.pathname.startsWith(item.path)
+                const Icon = item.icon
+                return (
+                  <SidebarMenuItem key={item.key}>
+                    <SidebarMenuButton
+                      render={<NavLink to={item.path} />}
+                      isActive={isActive}
+                      tooltip={item.label}
+                    >
+                      <Icon />
+                      <span>{item.label}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
       </SidebarContent>
 
       <SidebarSeparator />
 
-      {/* Footer — Settings + User */}
+      {/* Footer */}
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
-              render={<NavLink to="/settings" />}
-              isActive={location.pathname === '/settings'}
-              tooltip="Settings"
+              render={<NavLink to="/admin/settings" />}
+              isActive={location.pathname === '/admin/settings'}
+              tooltip="Profile"
             >
               <Settings />
-              <span>Settings</span>
+              <span>Profile</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
 
@@ -152,7 +132,7 @@ export default function AppSidebar() {
               </Avatar>
               <div className="grid flex-1 text-left text-xs leading-tight">
                 <span className="truncate font-medium">{userName}</span>
-                <span className="truncate text-muted-foreground text-[10px]">{userRole}</span>
+                <span className="truncate text-muted-foreground text-[10px]">Admin</span>
               </div>
               <LogOut className="size-4 ml-auto text-muted-foreground" />
             </SidebarMenuButton>

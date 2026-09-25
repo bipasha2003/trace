@@ -15,7 +15,7 @@
 | [`../AGENTS.md`](../AGENTS.md) | Conventions and context for agents writing the code |
 | [`../README.md`](../README.md) | End-user overview and setup |
 
-Last revised 2026-09-21.
+Last revised 2026-09-25.
 
 ---
 
@@ -656,9 +656,9 @@ version number and `generated_reason` so users understand why it moved.
 |---------|--------|-------|
 | JWT login/logout | ✅ | Token in `localStorage` via `AuthContext` |
 | Three hardcoded platform roles | ✅ | Collapsed to Admin, Manager, Employee |
-| Panel separation `/admin` `/manager` `/employee` | 🔲 | All roles share one shell today |
-| Public landing page at `/` | 🔲 | `/` currently redirects to `/dashboard` |
-| Guest-only + role-route guards, `/403` | 🔲 | |
+| Panel separation `/admin` `/manager` `/employee` | ✅ | Three layouts, RoleRoute, GuestOnlyRoute, 403 page |
+| Public landing page at `/` | ✅ | Hero, problem, how-it-works, feature grid, footer |
+| Guest-only + role-route guards, `/403` | ✅ | GuestOnlyRoute + RoleRoute; mismatch → /403, never silent redirect |
 | Project-scoped authorisation | 🔲 | Via `project_assignments` |
 | Dynamic roles / menus / permission matrix | ❌ | Tables dropped Phase 1 |
 | User registration, profile update | ✅ | |
@@ -718,7 +718,7 @@ version number and `generated_reason` so users understand why it moved.
 | Control Panel — all-tables CRUD | ✅ | Extended to all new Phase-1 tables |
 | Workforce — full record set | 🔄 | Exists split across pages; consolidate |
 | Bulk upload on every Workforce tab | 🔄 | `/hrms/bulk-upload` exists; extend + report rejected rows |
-| Monitor page | 🔄 | Promote from header overlay |
+| Monitor page | ✅ | Promoted from header overlay to /admin/monitor full page |
 | Configuration via `system_settings` | 🔲 | `system_settings` table created Phase 1; UI in Phase 8 |
 | Reports | 🔲 | Placeholder — **Q7 blocks the contents** |
 
@@ -749,8 +749,8 @@ version number and `generated_reason` so users understand why it moved.
 |---------|--------|-------|
 | shadcn/ui + Tailwind v4 OKLCH tokens | ✅ | |
 | Dark / light mode | ✅ | |
-| Three panel layouts | 🔲 | |
-| Landing page | 🔲 | |
+| Three panel layouts | ✅ | AdminLayout (sidebar) + ManagerLayout + EmployeeLayout (topbar only) |
+| Landing page | ✅ | Public marketing page at / with hero, how-it-works, feature grid |
 | Project selector topbar | 🔲 | |
 | Gantt + graph components | 🔲 | |
 | Toasts (`sonner`) | ✅ | |

@@ -223,9 +223,9 @@ API and the UI, and the workforce endpoints in 0.4 still respond.
 
 ---
 
-## Phase 2 — Panel separation & landing page
+## Phase 2 — Panel separation & landing page ✅
 
-Frontend-led. Nothing here needs AI.
+*Status: Completed 2026-09-25. Three panel layouts (AdminLayout sidebar, ManagerLayout/EmployeeLayout topbar-only) built. GuestOnlyRoute and RoleRoute guards implemented. /403 ForbiddenPage built — shows role info, never silently redirects. LoginPage redirects to role-based base route. LandingPage built with hero, problem statement, 3-step how-it-works, feature grid, CTA and footer. Admin sidebar rewritten with static 5-item menu. MonitorPage promoted from header overlay to full /admin/monitor page. Stub panel pages in place for Phase 3 wiring. Frontend build passes with exit code 0.*
 
 1. Split `DashboardLayout` into `AdminLayout` (sidebar), `ManagerLayout` and
    `EmployeeLayout` (topbar only).

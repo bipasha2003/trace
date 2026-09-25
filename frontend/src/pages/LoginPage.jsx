@@ -6,6 +6,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Eye, EyeOff, ArrowRight, Mail, Lock, AlertCircle } from 'lucide-react'
+import { getRoleBase } from '@/components/GuestOnlyRoute'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -21,16 +22,17 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [loginError, setLoginError] = useState(null)
 
-  const { login, isAuthenticated, error: authError, setError } = useAuth()
+  const { login, isAuthenticated, user, error: authError, setError } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
 
   useEffect(() => {
-    if (isAuthenticated) {
-      const from = location.state?.from?.pathname || '/dashboard'
-      navigate(from, { replace: true })
+    if (isAuthenticated && user) {
+      const from = location.state?.from?.pathname
+      const base = getRoleBase(user)
+      navigate(from || base, { replace: true })
     }
-  }, [isAuthenticated, navigate, location])
+  }, [isAuthenticated, user, navigate, location])
 
   useEffect(() => {
     setError(null)
@@ -41,9 +43,10 @@ export default function LoginPage() {
     setIsLoading(true)
     setLoginError(null)
     try {
-      await login(email, password)
-      const from = location.state?.from?.pathname || '/dashboard'
-      navigate(from, { replace: true })
+      const userData = await login(email, password)
+      const from = location.state?.from?.pathname
+      const base = getRoleBase(userData)
+      navigate(from || base, { replace: true })
     } catch (err) {
       setLoginError(err.message || 'Invalid email or password')
     } finally {
@@ -60,7 +63,7 @@ export default function LoginPage() {
             T
           </div>
           <h1 className="text-2xl font-bold tracking-tight">Welcome to TRACE</h1>
-          <p className="text-sm text-muted-foreground mt-1">Sign in to your workforce panel</p>
+          <p className="text-sm text-muted-foreground mt-1">Sign in to your TRACE panel</p>
         </div>
 
         {/* Error Banner */}
@@ -144,7 +147,7 @@ export default function LoginPage() {
         </Card>
 
         <p className="text-center text-xs text-muted-foreground mt-6">
-          TRACE v1.0 — AI-Powered Workforce Management
+          TRACE — AI-Powered Project Management
         </p>
       </div>
     </div>
