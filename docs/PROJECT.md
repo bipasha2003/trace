@@ -15,7 +15,7 @@
 | [`../AGENTS.md`](../AGENTS.md) | Conventions and context for agents writing the code |
 | [`../README.md`](../README.md) | End-user overview and setup |
 
-Last revised 2026-09-25.
+Last revised 2026-09-26.
 
 ---
 
@@ -128,7 +128,7 @@ Panels are fully separated by base route. There is no shared shell across roles.
 | **Control Panel** | `/admin/control-panel` | Generic CRUD over **every** table. Raw and table-driven — the escape hatch, not the daily UI. |
 | **Workforce** | `/admin/workforce` | Curated UI over the whole workforce record set: employees, managers, leaves, holidays, attendance, work shifts, departments, designations. Every tab has CRUD **and bulk upload** (CSV/JSON). The same tables appear in Control Panel; this is the human view. |
 | **Monitor** | `/admin/monitor` | Server and service health: API, PostgreSQL, Redis, Celery worker, Celery beat, MinIO, Mailpit, WebSocket, LLM reachability, recent Celery job outcomes. |
-| **Configuration** | `/admin/configuration` | Runtime settings in the database, not only `.env`: mail/SMTP, AI provider (key, base URL, model), GitHub credentials, CI/CD webhook secret. Per-section "test connection". |
+| **Configuration** | `/admin/configuration` | Runtime settings in the database, not only `.env`: mail/SMTP, AI provider (key, base URL, model), GitHub (the company's owner + token — [`CORE.md`](CORE.md) §4.1), CI/CD webhook secret. Per-section "test connection". |
 | **Reports** | `/admin/reports` | **Pending definition** — see [`PLANNING.md`](PLANNING.md) Q7. Ships as a placeholder route. |
 
 ---
@@ -249,7 +249,7 @@ them — because planning needs to know who is available.
 | `name` | `String(255)` | |
 | `description` | `Text` | |
 | `created_by_user_id` | FK `users.id` | The **Manager** who created it |
-| `github_repo` | `String(255)` | e.g. `org/repo`. Where issues and doc files live |
+| `github_repo` | `String(255)` | `owner/repo`. Where issues and doc files live. **Created by TRACE** under the configured owner when the project is created ([`CORE.md`](CORE.md) §4.1) |
 | `github_default_branch` | `String(100)` | Default `main`. Branch strategy deferred — `PLANNING.md` Q6 |
 | `status` | `String(20)` | `Draft`, `Evaluating`, `Active`, `Completed`, `Archived` |
 | `start_date` / `end_date` | `Date` | Planned window, maintained by the Gantt evaluator |
@@ -377,7 +377,17 @@ Backs Admin → Configuration.
 | `value` | `Text` | Encrypted at rest for secrets |
 | `is_secret` | `Boolean` | Masked in API responses |
 
-Unique on (`category`, `key`). Resolution order: database value, then `.env` fallback.
+Unique on (`category`, `key`). Resolution order: database value, then `.env` fallback
+(`app/services/system_settings.py`).
+
+GitHub keys ([`CORE.md`](CORE.md) §4.1):
+
+| Key | Secret | `.env` fallback | Purpose |
+|-----|--------|-----------------|---------|
+| `github.owner` | no | `GITHUB_OWNER` | The organization every project repo lives under |
+| `github.token` | **yes** — encrypted, write-only | `GITHUB_TOKEN` | Fine-grained token scoped to that owner |
+| `github.api_url` | no | `GITHUB_API_URL` | `https://api.github.com`; GitHub Enterprise otherwise |
+| `github.committer_name` / `github.committer_email` | no | `GITHUB_COMMITTER_NAME` / `_EMAIL` | Identity on the commits TRACE makes |
 
 ### 11.9 `cicd_events`
 
@@ -541,7 +551,7 @@ Reports         FileBarChart
 | **Control Panel** | Table picker grouped by category, then a generic data grid with create/edit/delete dialogs and filtering. Driven by the existing `MODEL_REGISTRY` pattern in `backend/app/api/v1/admin.py`. |
 | **Workforce** | Tabs per §5. Purpose-built, not a raw grid: directory cards and search for people, an approve/reject queue for leaves, a calendar for holidays, a filterable log for attendance, a shift editor with employee assignment. Every tab has a **Bulk Upload** action (CSV/JSON) with a validation summary that reports rejected rows rather than failing silently. Attendance and shifts are Admin-maintained records — there is no clock-in control anywhere in the product. |
 | **Monitor** | `ServiceMonitor.jsx` promoted from a header overlay to a page. Health cards for API, PostgreSQL, Redis, Celery worker, Celery beat, MinIO, Mailpit, WebSocket and LLM, plus recent Celery job outcomes. |
-| **Configuration** | Sections for Mail/SMTP, AI provider, GitHub, CI/CD webhook. Secrets masked, each section with "Test connection". Writes to `system_settings`. |
+| **Configuration** | Sections for Mail/SMTP, AI provider, GitHub, CI/CD webhook. Secrets are write-only (masked, never returned), each section with "Test connection". Writes to `system_settings`. **GitHub is built first** — organization, token, committer identity; its test checks the token and the organization — because no task can be created without it. Repos are always public, so there is no visibility setting. |
 | **Reports** | Placeholder page stating the report set is pending definition. |
 
 ## 19. Manager panel UI
@@ -568,9 +578,14 @@ progress bars and Project Manager avatars, and a recent-activity feed.
 - *Team* — assign and remove Project Managers, with AI suggestions (score +
   reasoning) inline
 
-**Create project** — a stepper: details (name, description, GitHub repo) → upload
-source files (multi-file drop zone) → review → create. On create, offer
-**Evaluate Project** immediately.
+**Create project** — a stepper: details (name, description) → upload source files
+(multi-file drop zone) → review → create. The repository is **created by TRACE** as
+`<org>/<project-slug>` (public) and shown on the review step; the Manager does not
+type one ([`CORE.md`](CORE.md) §4.1). The upload step says plainly that generated
+documents will be public. On create, offer **Evaluate Project** immediately.
+
+> *Phase 3 as built* still asks the Manager for an existing `owner/repo`; the
+> GitHub-owner work in [`DEVELOPMENT.md`](DEVELOPMENT.md) Phase 3a replaces that field.
 
 ## 20. Employee panel UI
 
@@ -660,7 +675,7 @@ version number and `generated_reason` so users understand why it moved.
 | Public landing page at `/` | ✅ | Hero, problem, how-it-works, feature grid, footer |
 | Guest-only + role-route guards, `/403` | ✅ | GuestOnlyRoute + RoleRoute; mismatch → /403, never silent redirect |
 | Platform-role guard on every route | ✅ | Phase 2 step 6. Workforce, productivity and service-health endpoints are Admin-only |
-| Project-scoped authorisation | 🔲 | Via `project_assignments` |
+| Project-scoped authorisation | ✅ | `app/core/project_access.py` — Admin reads all, Manager owns theirs, Employee via `project_assignments` |
 | Dynamic roles / menus / permission matrix | ❌ | Tables dropped Phase 1 |
 | User registration, profile update | ✅ | Self-registration always creates an `Employee`; only an Admin may create Admin / Manager accounts |
 | `github_username` on user | ✅ | Added Phase 1; Admin + user-settings editable |
@@ -669,11 +684,14 @@ version number and `generated_reason` so users understand why it moved.
 ### Projects *(new core)*
 | Feature | Status | Notes |
 |---------|--------|-------|
-| `projects` table + CRUD | 🔲 | Table exists; CRUD endpoints in Phase 3 |
-| `project_source_files` multi-upload (MinIO) | 🔲 | Table exists; upload endpoint in Phase 3 |
+| `projects` table + CRUD | ✅ | Manager-owned (Q11); delete refused while tasks are open |
+| `project_source_files` multi-upload (MinIO) | ✅ | pdf / docx / md / txt, 20 MB each; text extracted at upload; rejects reported per file |
 | The four project documents | 🔲 | Columns exist; population in Phase 5 |
-| Project Manager assignment / removal | 🔲 | `project_assignments` table exists; endpoint in Phase 3 |
-| Manager combined + per-project dashboards | 🔲 | |
+| Project Manager assignment / removal | ✅ | Plain picker; a removed PM holding tasks stays as Member. AI ranking is Phase 5 |
+| Manager combined + per-project dashboards | ✅ | Tree, Gantt and Progress Report tabs are placeholders until Phases 4–5 |
+| GitHub owner model — one company owner + token | 🔲 | Decided 2026-09-26, [`CORE.md`](CORE.md) §4.1. Build in Phase 3a |
+| Repo created by TRACE per project | 🔲 | Phase 3a. Today the Manager enters an existing `owner/repo` |
+| Collaborator invite on joining a project | 🔲 | Phase 3a. Needed before issues can be assigned to people outside the owner |
 | Project tree graph | 🔲 | |
 | Gantt chart, versioned | 🔲 | `gantt_charts` table exists; population in Phase 5 |
 
@@ -681,14 +699,14 @@ version number and `generated_reason` so users understand why it moved.
 | Feature | Status | Notes |
 |---------|--------|-------|
 | `task_groups` | ✅ | Table + model created Phase 1 |
-| Task CRUD scoped to a group | 🔲 | Schema ready; endpoints in Phase 3 |
-| Task ↔ GitHub issue 1:1 on creation | 🔲 | Blocked on Q9 |
-| GitHub issue assignment to Member | 🔲 | Blocked on Q9 |
+| Task CRUD scoped to a group | ✅ | Project Manager only; details and status have separate endpoints |
+| Task ↔ GitHub issue 1:1 on creation | ✅ | Same request; GitHub failure rolls the task back; no token → 503. Complete/cancel/delete close the issue |
+| GitHub issue assignment to Member | ✅ | Via `users.github_username` (Q9, self-service in Profile); missing username → unassigned issue + warning |
 | `task_progress_doc` per task | ✅ | Column exists; population in Phase 5 |
-| Completion authority enforcement | 🔲 | [`CORE.md`](CORE.md) §7 |
+| Completion authority enforcement | ✅ | `ProjectAccess.may_set_status`; Member → 403 on Completed; PM completion records `completed_by` |
 | Per-task discussion | ✅ | `task_discussions` table created Phase 1 |
 | Infinite tree, `Team Lead`, rotating roles | ❌ | Flattened to three levels |
-| Kanban board | 🔄 | Regroup by task group |
+| Task board grouped by task group | ✅ | Replaces the old Kanban (`TasksPage.jsx` deleted) |
 | Project group chat + tagging rules | ❌ | Replaced |
 
 ### AI automation — see [`CORE.md`](CORE.md)
@@ -720,7 +738,7 @@ version number and `generated_reason` so users understand why it moved.
 | Workforce — full record set | 🔄 | Exists split across pages; consolidate |
 | Bulk upload on every Workforce tab | 🔄 | `/hrms/bulk-upload` exists; extend + report rejected rows |
 | Monitor page | ✅ | Promoted from header overlay to /admin/monitor full page |
-| Configuration via `system_settings` | 🔲 | `system_settings` table created Phase 1; UI in Phase 8 |
+| Configuration via `system_settings` | 🔄 | Resolution (DB → `.env`) built. GitHub section pulled forward to Phase 3a; the rest in Phase 8 |
 | Reports | 🔲 | Placeholder — **Q7 blocks the contents** |
 
 ### Workforce (Admin-owned records)
@@ -742,7 +760,7 @@ version number and `generated_reason` so users understand why it moved.
 | Alembic migrations, `./start.sh` | ✅ | Alembic is the only schema owner; an empty DB reaches head (tested). `start` migrates first |
 | Backend test suite | ✅ | Own `trace_test` DB built by migrations; route-guard audit + role matrix; migration-chain test |
 | WebSocket endpoint | ✅ | Re-point from group chat to notifications/discussion |
-| GitHub API integration | 🔄 | Issue create/assign + repo file commit |
+| GitHub API integration | ✅ | `github_service.py`: issue create / assign / open-close, file commit. Repo creation + collaborator invites are Phase 3a |
 | CI/CD receiver webhook (HMAC) | 🔲 | |
 | The project's own CI/CD pipeline | 🔲 | Explicitly a task in the build |
 | Single root `.env` | ✅ | The only env file; backend derives DB / Redis / MinIO / SMTP settings from the Compose keys |
@@ -756,7 +774,7 @@ version number and `generated_reason` so users understand why it moved.
 | Dark / light mode | ✅ | |
 | Three panel layouts | ✅ | AdminLayout (sidebar) + ManagerLayout + EmployeeLayout (topbar only) |
 | Landing page | ✅ | Public marketing page at / with hero, how-it-works, feature grid |
-| Project selector topbar | 🔲 | |
+| Project selector topbar | ✅ | `components/ProjectSelector.jsx`, URL-driven |
 | Gantt + graph components | 🔲 | |
 | Toasts (`sonner`) | ✅ | |
 | Responsive / mobile | 🔄 | Desktop only today |

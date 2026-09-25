@@ -92,6 +92,12 @@ consolidated into six: `AGENTS.md` and `README.md` at the root, and `PROJECT.md`
 | 2026-09-25 | Production serves `vite build` output through `vite preview`, not the dev server | The runbook exposes the Vite dev server. Rejected here: the dev server is not meant for public exposure (source maps, `/@fs`, HMR endpoints). `vite preview` keeps the same `/api` proxy, so the API stays same-origin and needs no public route |
 | 2026-09-25 | Production skips demo users and the demo project, and refuses to start while any account has its published seed password | The seed passwords are in the repo and printed on the startup banner; on a public URL they are an open Admin login. `./start.sh set-password` was added because no password-change path existed |
 | 2026-09-25 | **One env file**, the repo-root `.env`; `backend/.env` and its example removed. The backend derives its connection settings from the Compose keys, and `AI_API_KEY` became `OPENAI_API_KEY` | Two files held the same facts under different names (`POSTGRES_PASSWORD` vs `DATABASE_URL`, `MINIO_ROOT_USER` vs `MINIO_ACCESS_KEY`, `AI_API_KEY` vs `OPENAI_API_KEY`) and had already drifted — the 5432/5433 mismatch. Merging the files alone would keep the duplicates, so the backend now derives them; an explicit value still overrides, which the tests and the Compose app containers need |
+| 2026-09-26 | **One company GitHub owner and one token**, entered by the Admin; TRACE creates every project's repository under that owner and invites people as collaborators ([`CORE.md`](CORE.md) §4.1) | The spec assumed each Manager supplies an existing repo and left credentials to "Configuration, Phase 8". That leaves every project depending on repos TRACE cannot vouch for, and nobody able to create a task until Phase 8. A single owner gives one place to grant and revoke access, one token to rotate, and repos TRACE can set up itself. Per-user GitHub sign-in was the alternative — rejected (§4) |
+| 2026-09-26 | Token is a **fine-grained** token scoped to that owner, write-only and encrypted at rest — not a classic full-access token | The first proposal was "a full-access token". A leaked full-access token opens every repo the account can reach; a fine-grained one limited to Administration / Contents / Issues / Metadata on one owner opens only TRACE's repos |
+| 2026-09-26 | Repos are an Organization's, and **always public** (Q12, Q13) | Private-by-default was the assumed safe choice. It was not taken: this is an educational project, public repos keep every GitHub feature on the free plan, and one fixed visibility removes a setting and a code path. The cost — requirement summaries become public — is stated in the UI |
+| 2026-09-26 | GitHub Configuration pulled forward from Phase 8 into a new **Phase 3a** | Task creation is issue creation, so without a token no task can exist. Waiting for Phase 8 would leave the core flow unusable through Phases 4–7 |
+| 2026-09-26 | Task status drives the issue state: complete / cancel / delete close it, reopening reopens it | Not in the spec. Without it, the task list and the issue list drift apart the first time a task is completed — the exact drift CORE.md §4 forbids |
+| 2026-09-26 | `PATCH /tasks/{id}` edits details only; status has its own endpoint | The legacy generic update accepted `status`, which bypassed completion authority. One door for status means one place the rule is enforced |
 
 ---
 
@@ -140,6 +146,7 @@ project-level baseline too.
 | Whiteboard / voice → project docs | Multimodal intake into `project_source_files` | After Phase 5 |
 | AI fairness audit | Check suggestion scores for systematic bias | After Phase 5 |
 | Multi-provider CI/CD (GitLab, Jenkins) | Beyond GitHub Actions | After Phase 6 |
+| GitHub App instead of a token | Short-lived, per-installation tokens not tied to a person; finer permissions | After Phase 3a |
 
 **Rule for everything in §3:** it does not enter the build until the phase it
 depends on has shipped. When it does, it moves into [`PROJECT.md`](PROJECT.md) §24
@@ -163,6 +170,9 @@ not re-proposed without new information.
 | AI auto-assigning people | AI suggests, a human accepts | Accountability for who does what must stay with a person |
 | A separate "add members to project" step | Assignment to a task grants membership | An extra gate with no decision behind it (Q8 — revisit if roster control is wanted) |
 | Storing markdown bodies in DB columns | GitHub file URLs | Documents are developer artefacts; they belong where developers review them |
+| Each Manager supplies an existing repository | TRACE creates the repo under the company owner | Repos TRACE did not create may lack its access, collide in naming, or belong to someone who leaves. Q6 |
+| Per-user GitHub sign-in (OAuth) | One company token, collaborators invited | Every user would need to authorise TRACE, and actions would run as whoever happened to trigger them — no single place to revoke access |
+| A classic full-access token | A fine-grained token scoped to the owner | Blast radius: a leak should expose TRACE's repos, not everything the account can reach |
 
 ---
 
@@ -182,6 +192,7 @@ short — a decision, and the reason it was not the obvious choice.
 | 2026-09-25 | Phase 2 completion | Found on a fresh checkout: (a) the 18 frontend files Phase 2 created were not in commits `332b6b1` / `b9f458a`, so `main` did not build until `c1f915a` added them — **always check `git status` for untracked files before marking a phase done**; (b) step 6, the backend guards, had not been done — `/hrms` and most of `/services` were fully unauthenticated, and `/auth/register` let anyone become Admin. Both fixed. (c) A fresh database cannot reach Alembic head: pre-Phase-1 tables and `tasks` columns were created by `Base.metadata.create_all` in `main.py` startup, never by a revision, so the Phase 1 step 1 revision fails on `tasks.commit_verified`. Fixed by catch-up revision `0a1c2e3f4d5b` and by removing `create_all` from startup; `start.sh start` now migrates first. (d) The existing test suite ran against the **dev** database and still used `Staff` and Admin self-registration — rebuilt on a dedicated `trace_test` DB built by Alembic. (e) The new role matrix exposed `GET /attendance/all` crashing on `Attendance.check_in` / `.status`, columns that do not exist — fixed. 162 tests pass |
 | 2026-09-25 | Cloudflare Tunnel + `APP_ENV` | Built from the calibry.in runbook, with two deliberate deviations: host networking, and `vite preview` (§2). A first version put the production preflight in a pydantic `model_validator`; running it printed the tail of the tunnel token, because a `ValidationError` echoes its input. The preflight moved to `get_settings()`, and a test with canary values pins it. Verified: the preflight refuses, `vite preview` serves only the production hostnames and proxies `/api`, and the tunnel token registers 4 connections. 177 tests pass |
 
+| 2026-09-26 | Phase 3 execution | Built the manual path: projects, source files (MinIO + pdf/docx/md/txt extraction), team, task groups, tasks as GitHub issues, completion authority. Found the legacy `/tasks` router was a live hole on the public site — any signed-in user could complete any task through `PATCH /tasks/{id}` — and most of it referenced dropped columns; replaced wholesale. Non-obvious: (a) creating a task flushes before calling GitHub, so the service rolls back explicitly on a GitHub error rather than trusting `get_db` to — the test harness caught this because its session did not roll back; the harness now mirrors `get_db`. (b) New rows need `refresh()` before reading `created_at` — it is a server default and an async lazy load raises `MissingGreenlet`. (c) The UI never decides what a user may do: task responses carry `can_edit` and `allowed_statuses`, derived from the same `ProjectAccess.may_set_status` the API enforces. (d) `scoring_service.py` still reads the dropped `Task.assigned_to` — left for Phase 5 step 3, which re-bases scoring. Then, mid-phase, the GitHub owner model was decided (§2) and scheduled as Phase 3a |
 ---
 
 ## 6. Open questions
@@ -198,12 +209,14 @@ reasoning behind a decision remains visible.
 | Q3 | Dynamic roles & menu matrix | Assumed |
 | Q4 | Existing Tier-1 AI features | Assumed |
 | Q5 | Group chat vs per-task discussion | Assumed |
-| Q6 | GitHub repo & branch strategy | Assumed |
+| Q6 | GitHub repo & branch strategy | ✅ Answered 2026-09-26 (repo); branching still deferred |
 | Q7 | Admin → Reports contents | **Blocked — needs an answer** |
 | Q8 | Member roster vs task assignment | Assumed |
 | Q9 | GitHub account mapping | Assumed |
 | Q10 | Who approves leaves | Assumed |
 | Q11 | Manager ↔ project ownership | Assumed |
+| Q12 | GitHub owner: Organization or personal account | ✅ Answered 2026-09-26 — Organization |
+| Q13 | Visibility of created repos | ✅ Answered 2026-09-26 — always public |
 
 ### Q1 — How deep does the task hierarchy go?
 The codebase implements an **infinite** tree with roles rotating per level. The new
@@ -257,11 +270,11 @@ rules depended on the tree, which is gone.
 ### Q6 — Repository and branch strategy
 Tasks are GitHub issues and the project documents are repo files, so every project
 needs a repo. The branching model was explicitly deferred.
-**Assumption:** **one repository per project**, on `projects.github_repo`, entered
-by the Manager at creation. Documents are committed to the default branch.
-Per-task or per-feature branching is **deferred**.
-**Also unanswered:** does TRACE create the repo, or does the Manager supply an
-existing one? The docs assume **supply an existing one**.
+**Answer (2026-09-26):** **one repository per project, created by TRACE** under the
+single company GitHub owner configured by the Admin ([`CORE.md`](CORE.md) §4.1).
+The Manager no longer supplies a repo. Documents are committed to the default
+branch. Per-task or per-feature branching is still **deferred**.
+*Was assumed:* the Manager supplies an existing repo — rejected (§4).
 **Open for later discussion:** a branch per task named from the issue id (the
 resolver would key on the branch rather than the commit message); monorepo projects
 sharing one repository; PR-merge rather than successful deploy as the completion signal.
@@ -302,3 +315,19 @@ current panel spec does not include.
 ### Q11 — Can two Managers share a project?
 **Assumption:** **one owning Manager per project**, no co-ownership, and Managers
 cannot see each other's projects. Admin sees everything.
+
+### Q12 — Is the company's GitHub owner an Organization or a personal account?
+Both can own the repos TRACE creates, but they differ in what collaborators get: an
+Organization can grant *Write* per repo and remove a person everywhere at once; on a
+personal account every collaborator gets full push access, and the create-repo API
+call differs.
+**Answer (2026-09-26):** an **Organization**. Personal accounts are not supported —
+do not build owner-type detection; create repos with `POST /orgs/{org}/repos`.
+
+### Q13 — Should repositories TRACE creates be private or public?
+**Answer (2026-09-26):** **always public** — TRACE is an educational project. No
+visibility setting. Consequences, accepted: issues, generated documents (including
+the AI's summary of the requirements) and commit history are world-readable; source
+files stay private in MinIO; the free-plan limits on private repos (e.g. branch
+protection) do not apply. The UI must say documents will be public where
+requirements are uploaded.

@@ -70,6 +70,8 @@ class UserService:
             raise NotFoundException("User")
 
         update_data = data.model_dump(exclude_unset=True)
+        if update_data.get("github_username") == "":
+            update_data["github_username"] = None
         for field, value in update_data.items():
             setattr(user, field, value)
 
@@ -108,5 +110,6 @@ class UserService:
             status=user.status,
             profile=user.profile,
             roles=roles,
+            github_username=user.github_username,
             created_at=user.created_at,
         )

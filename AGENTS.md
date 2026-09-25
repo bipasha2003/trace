@@ -1,6 +1,8 @@
 # AGENTS.md — TRACE
 
-> Read this first, every session. Then read [`docs/PROJECT.md`](docs/PROJECT.md).
+> Read this first, every session. Then read the **handoff** at the top of
+> [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — where the build stands, what is
+> next, and the traps on this machine — then [`docs/PROJECT.md`](docs/PROJECT.md).
 
 ---
 
@@ -29,6 +31,7 @@ that lies is worse than no doc, because it will be believed.
 | Rejected an approach after considering it | [`docs/PLANNING.md`](docs/PLANNING.md) §4, so nobody re-proposes it |
 | Changed setup, commands, ports or user-facing behaviour | [`README.md`](README.md) |
 | Established a new convention or hit a trap worth naming | This file, §4 or §7 |
+| Finished a session, a phase, or stopped part-way | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) **Handoff** — phase table, test count, environment traps, known gaps. The next agent starts there |
 
 **If a change makes a document wrong, fixing that document is part of the task —
 not a separate one.** If the spec itself needs to change, change the spec *first*,
@@ -93,13 +96,43 @@ A task is not complete until the docs describe what the code now does.
 
 Base URL `http://localhost:8000/api/v1`, proxied by Vite.
 
+### Built (Phase 3)
+
+Platform role on the route, then the caller's project role from
+`app/core/project_access.py` — never re-derived inline.
+
+```
+GET    /projects                             projects visible to the caller (+ stats, PMs, my_role)
+POST   /projects                             create (Manager)
+GET    /projects/activity                    recent task changes across visible projects
+GET    /projects/{id}                        detail: documents, source files, stats
+PATCH  /projects/{id}                        edit (owner Manager); 'Evaluating' is not settable
+DELETE /projects/{id}                        owner; refused while tasks are open
+POST   /projects/{id}/source-files           multi-file → MinIO + text extraction; rejects reported
+DELETE /projects/{id}/source-files/{fid}     owner
+GET    /projects/{id}/assignments            team with project roles
+POST   /projects/{id}/assignments            appoint Project Manager (owner)
+DELETE /projects/{id}/assignments/{uid}      remove PM (owner); keeps them as Member if they hold tasks
+GET    /projects/{id}/candidates             active Employees (owner or PM)
+GET|POST          /projects/{id}/task-groups             list · create (PM)
+PATCH|DELETE      /projects/{id}/task-groups/{gid}       PM; delete refused while it has tasks
+GET    /projects/{id}/tasks                  list (?task_group_id=, ?mine=true)
+POST   /projects/{id}/tasks                  create task + GitHub issue (PM); 503 without a token
+GET    /tasks/mine                           my open tasks across projects (Employee)
+GET    /tasks/{id}                           detail + can_edit + allowed_statuses
+PATCH  /tasks/{id}                           details only (PM) — never status
+PATCH  /tasks/{id}/assign                    assign / unassign + GitHub assignees (PM)
+PATCH  /tasks/{id}/status                    completion authority enforced HERE
+DELETE /tasks/{id}                           soft delete + close issue as not planned (PM)
+GET    /tasks/health-summary                 Task Health totals (Admin)
+POST   /tasks/compute-health                 enqueue health recompute (Admin)
+```
+
 ### To build
 
 | Module | Prefix | Purpose |
 |--------|--------|---------|
-| Projects | `/projects` | CRUD, source files, evaluate, assignments, documents |
-| Task groups | `/projects/{id}/task-groups` | Gantt modules |
-| Tasks | `/projects/{id}/tasks` | Scoped CRUD, assignment, completion |
+| GitHub settings (Phase 3a) | `/admin/settings/github` | Owner + write-only token + test — [`docs/CORE.md`](docs/CORE.md) §4.1 |
 | Gantt | `/projects/{id}/gantt` | Latest chart + version history |
 | Discussions | `/tasks/{id}/discussions` | Per-task threads |
 | Notifications | `/notifications` | List, mark read, unread count |
@@ -107,18 +140,16 @@ Base URL `http://localhost:8000/api/v1`, proxied by Vite.
 | Webhooks | `/webhooks/cicd` | HMAC-signed CI/CD receiver |
 
 ```
-POST  /projects                              create (Manager)
-POST  /projects/{id}/source-files            multi-file upload → MinIO
+GET   /admin/settings/github                 org, committer; token only as "set / not set"
+PUT   /admin/settings/github                 token is write-only
+POST  /admin/settings/github/test            token valid · organization visible
 POST  /projects/{id}/evaluate                enqueue evaluate_project
 GET   /projects/{id}/evaluate/status         job state
-POST  /projects/{id}/assignments             assign Project Manager
 GET   /projects/{id}/suggest-managers        AI-ranked PM candidates
 GET   /projects/{id}/tree                    graph payload
 GET   /projects/{id}/gantt                   latest chart version
 PUT   /projects/{id}/doc                     edit project_doc → triggers re-eval
-POST  /projects/{id}/tasks                   create task + GitHub issue
 GET   /projects/{id}/tasks/suggest-assignees AI-ranked Members
-PATCH /tasks/{id}/status                     completion authority enforced HERE
 POST  /webhooks/cicd                         CI/CD → AI completion resolution
 ```
 
@@ -143,6 +174,7 @@ POST  /webhooks/cicd                         CI/CD → AI completion resolution
 | `/tasks/groups/*` | Group chat replaced by discussions |
 | `/tasks/tree/hierarchy`, `/tasks/{id}/evaluate-tree` | Infinite tree removed |
 | `/tasks/disputes*`, `/tasks/overallocations` | Deferred |
+| Legacy `/tasks` CRUD, `/tasks/{id}/push-github`, `/verify-commit`, timers, comments | Removed in Phase 3: generic `PATCH` let anyone complete a task; push-github faked URLs. Replaced by the routes above; discussions return in Phase 7 |
 
 ---
 
@@ -155,8 +187,9 @@ frontend/src/
     ManagerLayout.jsx      ← topbar only + project selector
     EmployeeLayout.jsx     ← topbar only + project selector
   components/
-    ui/                    ← shadcn-generated, NEVER hand-edit
-    ProjectSelector.jsx
+    ui/                    ← shadcn-generated, NEVER hand-edit (Base UI: `render`, not `asChild`)
+    ProjectSelector.jsx    ← topbar selector; the URL is the selected project
+    project/               ← ProjectOverview · TaskBoard · TeamPanel · status badges · NotYetAvailable
     ProjectTreeGraph.jsx
     GanttChart.jsx
     NotificationBell.jsx
@@ -168,8 +201,8 @@ frontend/src/
     employee/ EmployeeDashboardPage · ProjectDetailPage · TaskDetailPage
   contexts/
     AuthContext.jsx        ← JWT + platform role
-    ProjectContext.jsx     ← selected project + caller's project role
     ThemeContext.jsx
+  lib/project.js           ← apiError, formatDate, isOverdue …
   api/                     ← one module per backend router
 ```
 
@@ -187,6 +220,15 @@ frontend/src/
   **Every new route declares a guard** (`require_admin`, `require_roles(...)` or
   `require_any_role` from `app/core/permissions.py`). The only unauthenticated
   routes are `/health` and `/auth/{login,refresh,register}`.
+- **GitHub:** every call goes through `app/services/github_service.py`; every
+  credential through `resolve_setting()` (database, then `.env`). Secrets are
+  **write-only** — no API ever returns one. Tests use the `fake_github` fixture;
+  an autouse fixture blocks real GitHub and MinIO in every test.
+- A task and its GitHub issue change together or not at all: call GitHub *before*
+  committing, and roll back explicitly if it fails.
+- Responses tell the UI what the caller may do (`can_edit`, `allowed_statuses`),
+  derived from the same `ProjectAccess` check the API enforces. The UI never
+  re-derives authority.
 - **Completion authority is enforced in the API layer.** A Member calling
   `PATCH /tasks/{id}/status` with `Completed` gets a 403, always.
   ([`docs/CORE.md`](docs/CORE.md) §7)

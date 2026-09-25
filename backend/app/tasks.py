@@ -377,7 +377,7 @@ def llm_chat_task(self, message: str, model: str = None):
 @celery_app.task(name="app.tasks.compute_task_health_and_escalate", bind=True, max_retries=2)
 def compute_task_health_and_escalate(self):
     """
-    Computes risk score (Green/Yellow/Red) per task node and rolls up worst health to parent tasks.
+    Computes risk score (Green/Yellow/Red) per task from its due date.
     Health is on-demand only; auto-escalation is deferred (see PLANNING.md 00a73.2).
     """
     async def _compute():
@@ -399,7 +399,6 @@ def compute_task_health_and_escalate(self):
                     )
                 )
                 tasks = res.scalars().all()
-                task_map = {t.id: t for t in tasks}
 
                 updated_count = 0
                 for t in tasks:
@@ -420,17 +419,6 @@ def compute_task_health_and_escalate(self):
                     t.health_reason = "; ".join(reasons) if reasons else "On track"
                     t.last_health_check = now
                     updated_count += 1
-
-                # 3. Tree Rollup: Parent inherits worst health of children
-                for t in sorted(tasks, key=lambda x: x.parent_task_id or 0, reverse=True):
-                    if t.parent_task_id and t.parent_task_id in task_map:
-                        parent = task_map[t.parent_task_id]
-                        if t.health_score == "Red":
-                            parent.health_score = "Red"
-                            parent.health_reason = f"Subtask #{t.id} ({t.title}) is Red"
-                        elif t.health_score == "Yellow" and parent.health_score != "Red":
-                            parent.health_score = "Yellow"
-                            parent.health_reason = f"Subtask #{t.id} ({t.title}) is Yellow"
 
                 await db.commit()
                 return {

@@ -98,6 +98,29 @@ Compose uses, so no value is written twice. Mail, AI provider, GitHub
 and CI/CD settings are changed in the app under **Admin → Configuration** — no
 redeploy needed.
 
+### GitHub
+
+Every task in TRACE **is** a GitHub issue, so TRACE needs GitHub access before
+anyone can create a task. It works as **one company GitHub account**, not as
+individual users:
+
+1. Create a GitHub **Organization** for the company. Personal accounts are not
+   supported. **Every repository TRACE creates is public**, and so are its issues
+   and generated documents. Never put secrets in requirement documents.
+2. Create a **fine-grained personal access token** limited to that organization,
+   with *Administration*, *Contents* and *Issues* set to read/write and *Metadata*
+   set to read. Don't use a classic full-access token.
+3. Give the token to TRACE. **Admin → Configuration → GitHub** is where this will
+   happen (planned). Until that screen exists, set `GITHUB_TOKEN` in `.env`.
+   Optionally set `GITHUB_COMMITTER_NAME` / `GITHUB_COMMITTER_EMAIL` for the commits
+   TRACE makes.
+4. Each person who works on tasks sets their **GitHub username** under Profile, so
+   issues can be assigned to them.
+
+Planned (see `docs/CORE.md` §4.1): TRACE will create each project's public
+repository under the organization, and invite project members as collaborators. Until then a
+Manager enters an existing `owner/repo` when creating a project.
+
 ---
 
 ## Production (public URL through Cloudflare Tunnel)

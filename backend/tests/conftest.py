@@ -110,7 +110,12 @@ async def client(db_session: AsyncSession):
     """Async HTTP client with the DB dependency pointed at the test session."""
 
     async def _override_get_db():
-        yield db_session
+        # Mirrors app.database.get_db: an error rolls the request's work back
+        try:
+            yield db_session
+        except Exception:
+            await db_session.rollback()
+            raise
 
     app.dependency_overrides[get_db] = _override_get_db
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -164,3 +169,103 @@ def role_headers(admin_headers, manager_headers, employee_headers) -> dict:
     """All three at once, keyed by platform role, plus ``None`` for anonymous."""
     return {"Admin": admin_headers, "Manager": manager_headers,
             "Employee": employee_headers, None: {}}
+
+
+# ── External services: never real in tests ───────────────────────
+import json as _json  # noqa: E402
+
+import httpx  # noqa: E402
+
+from app.services.github_service import GitHubClient, get_github_client  # noqa: E402
+from app.services.storage import get_storage  # noqa: E402
+
+
+class FakeGitHub:
+    """GitHub's REST API on an httpx.MockTransport: the real GitHubClient runs, only the network is fake."""
+
+    def __init__(self):
+        self.issues: dict[tuple[str, int], dict] = {}
+        self.files: dict[tuple[str, str], dict] = {}
+        self.requests: list[tuple[str, str, dict | None]] = []
+        self.fail_with: int | None = None  # set to e.g. 500 to make every call fail
+
+    def _handle(self, request: httpx.Request) -> httpx.Response:
+        body = _json.loads(request.content) if request.content else None
+        self.requests.append((request.method, request.url.path, body))
+        if self.fail_with:
+            return httpx.Response(self.fail_with, json={"message": "simulated GitHub failure"})
+        parts = request.url.path.strip("/").split("/")  # repos/{owner}/{repo}/...
+        repo = f"{parts[1]}/{parts[2]}"
+        if parts[3] == "issues" and request.method == "POST":
+            number = len([k for k in self.issues if k[0] == repo]) + 1
+            self.issues[(repo, number)] = {**body, "state": "open", "assignees": body.get("assignees", [])}
+            return httpx.Response(201, json={"number": number,
+                                             "html_url": f"https://github.com/{repo}/issues/{number}"})
+        if parts[3] == "issues" and request.method == "PATCH":
+            issue = self.issues[(repo, int(parts[4]))]
+            issue.update(body)
+            return httpx.Response(200, json={"number": int(parts[4])})
+        if parts[3] == "contents":
+            path = "/".join(parts[4:])
+            if request.method == "GET":
+                f = self.files.get((repo, path))
+                return httpx.Response(200, json={"sha": f["sha"]}) if f else httpx.Response(404, json={})
+            self.files[(repo, path)] = {**body, "sha": f"sha{len(self.files) + 1}"}
+            return httpx.Response(201, json={"content": {
+                "html_url": f"https://github.com/{repo}/blob/{body['branch']}/{path}"}})
+        return httpx.Response(404, json={"message": "not faked"})
+
+    def client(self) -> GitHubClient:
+        return GitHubClient("test-token", transport=httpx.MockTransport(self._handle),
+                            committer={"name": "TRACE Test", "email": "trace@example.com"})
+
+
+class FakeStorage:
+    def __init__(self):
+        self.objects: dict[str, bytes] = {}
+
+    async def put(self, key, data, content_type):
+        self.objects[key] = data
+
+    async def get(self, key):
+        return self.objects[key]
+
+    async def delete(self, key):
+        self.objects.pop(key, None)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_external_services():
+    """No test reaches real GitHub or MinIO, whatever .env says. `fake_github` opts in to a fake."""
+    storage = FakeStorage()
+    app.dependency_overrides[get_github_client] = lambda: None
+    app.dependency_overrides[get_storage] = lambda: storage
+    yield storage
+    app.dependency_overrides.pop(get_github_client, None)
+    app.dependency_overrides.pop(get_storage, None)
+
+
+@pytest.fixture
+def fake_storage(_isolate_external_services) -> FakeStorage:
+    return _isolate_external_services
+
+
+@pytest.fixture
+def fake_github() -> FakeGitHub:
+    fake = FakeGitHub()
+    app.dependency_overrides[get_github_client] = fake.client
+    return fake
+
+
+async def make_user(db: AsyncSession, role: str, username: str, github_username: str | None = None) -> tuple[int, dict]:
+    """A user of `role` → (user_id, auth headers)."""
+    from app.models.user import User
+
+    result = await AuthService(db).register(RegisterRequest(
+        name=username.replace("_", " ").title(), username=username,
+        email=f"{username}@trace.com", password="TestPass123!", role=role,
+    ))
+    if github_username:
+        (await db.get(User, result.user.id)).github_username = github_username
+        await db.flush()
+    return result.user.id, {"Authorization": f"Bearer {result.tokens.access_token}"}

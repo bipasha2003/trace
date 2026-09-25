@@ -20,14 +20,14 @@ export default function SettingsPage() {
   const { mode, toggleMode } = useTheme()
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
-  const [profileForm, setProfileForm] = useState({ name: '', phone: '', gender: '' })
+  const [profileForm, setProfileForm] = useState({ name: '', phone: '', gender: '', github_username: '' })
   const [notifications, setNotifications] = useState({
     email_task: true, email_attendance: true, email_reports: false,
     push_task: true, push_attendance: false,
   })
 
   useEffect(() => {
-    if (user) setProfileForm({ name: user.name || '', phone: user.phone || '', gender: user.gender || '' })
+    if (user) setProfileForm({ name: user.name || '', phone: user.phone || '', gender: user.gender || '', github_username: user.github_username || '' })
   }, [user])
 
   const handleSaveProfile = async () => {
@@ -37,6 +37,7 @@ export default function SettingsPage() {
         name: profileForm.name || undefined,
         phone: profileForm.phone || undefined,
         gender: profileForm.gender || undefined,
+        github_username: profileForm.github_username.trim(),
       })
       updateUser(res.data)
       setMsg({ type: 'success', text: 'Profile updated successfully!' })
@@ -105,6 +106,11 @@ export default function SettingsPage() {
                 <div className="space-y-2">
                   <Label htmlFor="s-phone">Phone</Label>
                   <Input id="s-phone" type="tel" placeholder="+91-9876543210" value={profileForm.phone} onChange={e => setProfileForm({ ...profileForm, phone: e.target.value })} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="s-github">GitHub username</Label>
+                  <Input id="s-github" placeholder="octocat" value={profileForm.github_username} onChange={e => setProfileForm({ ...profileForm, github_username: e.target.value })} />
+                  <p className="text-xs text-muted-foreground">Needed so the GitHub issues for your tasks can be assigned to you.</p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="s-email">Email</Label>

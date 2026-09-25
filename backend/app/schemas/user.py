@@ -45,6 +45,8 @@ class UserUpdate(BaseModel):
     phone: str | None = None
     gender: str | None = None
     dob: date | None = None
+    # Needed to assign GitHub issues (PLANNING.md Q9). Blank string clears it.
+    github_username: str | None = Field(None, max_length=39, pattern=r"^$|^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$")
 
 
 class UserResponse(UserBase):
@@ -53,6 +55,7 @@ class UserResponse(UserBase):
     status: str
     profile: ProfileResponse | None = None
     roles: list[str] = []
+    github_username: str | None = None
     created_at: datetime | None = None
 
     model_config = {"from_attributes": True}

@@ -39,6 +39,10 @@ aiosmtplib==3.0.2
 # MinIO (S3-compatible storage)
 minio==7.2.15
 
+# Source-file text extraction (projects)
+pypdf==6.1.1
+python-docx==1.2.0
+
 # OpenAI SDK (LLM)
 openai==1.82.0
 

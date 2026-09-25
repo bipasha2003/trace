@@ -1,11 +1,10 @@
 /**
  * TRACE — Manager Topbar
  * Brand · Project Selector · Notifications · Theme toggle · User menu
- * The project selector is a placeholder for now — wired in Phase 3.
  */
 
 import { useNavigate } from 'react-router-dom'
-import { Bell, Sun, Moon, ChevronDown, LogOut, Settings, FolderKanban } from 'lucide-react'
+import { Bell, Sun, Moon, ChevronDown, LogOut, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -15,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import ProjectSelector from '@/components/ProjectSelector'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useAuth } from '@/contexts/AuthContext'
 
@@ -43,19 +43,7 @@ export default function ManagerHeader() {
         <span className="font-semibold tracking-tight text-sm">TRACE</span>
       </div>
 
-      {/* Project Selector — placeholder, wired Phase 3 */}
-      <Button
-        id="manager-project-selector"
-        variant="outline"
-        size="sm"
-        className="gap-2 text-muted-foreground min-w-[160px] justify-between"
-      >
-        <span className="flex items-center gap-1.5">
-          <FolderKanban className="size-3.5" />
-          All Projects
-        </span>
-        <ChevronDown className="size-3.5" />
-      </Button>
+      <ProjectSelector base="/manager" />
 
       {/* Right */}
       <div className="ml-auto flex items-center gap-1">
@@ -77,8 +65,7 @@ export default function ManagerHeader() {
 
         {/* User menu */}
         <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button id="manager-user-menu" variant="ghost" size="sm" className="gap-2 px-2">
+          <DropdownMenuTrigger render={<Button id="manager-user-menu" variant="ghost" size="sm" className="gap-2 px-2" />}>
               <Avatar className="size-6 rounded-full">
                 <AvatarFallback className="text-xs bg-primary/20 text-primary">
                   {getInitials(userName)}
@@ -86,7 +73,6 @@ export default function ManagerHeader() {
               </Avatar>
               <span className="text-xs font-medium hidden sm:inline">{userName}</span>
               <ChevronDown className="size-3 text-muted-foreground" />
-            </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-40">
             <DropdownMenuItem onClick={() => navigate('/manager/settings')}>

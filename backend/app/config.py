@@ -90,6 +90,14 @@ class Settings(BaseSettings):
     SMTP_PORT: int | None = None  # defaults to MAILPIT_SMTP_PORT
     SMTP_FROM: str = "noreply@trace.com"
 
+    # ── GitHub (fallback — Admin → Configuration overrides) ──────
+    GITHUB_TOKEN: str = ""
+    GITHUB_API_URL: str = "https://api.github.com"
+    # Identity on the commits TRACE makes into project repos (generated docs).
+    # Empty → GitHub attributes them to the token's own account.
+    GITHUB_COMMITTER_NAME: str = ""
+    GITHUB_COMMITTER_EMAIL: str = ""
+
     # ── OpenAI SDK (LLM) ────────────────────────────────────────
     OPENAI_API_KEY: str = ""
     OPENAI_BASE_URL: str = ""

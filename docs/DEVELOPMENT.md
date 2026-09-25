@@ -7,6 +7,55 @@
 > [`PLANNING.md`](PLANNING.md) for the open questions in that area. Conventions are
 > in [`../AGENTS.md`](../AGENTS.md).
 
+## Handoff — where the build stands *(updated 2026-09-26)*
+
+**Start here if you are picking this up fresh.** Then read [`../AGENTS.md`](../AGENTS.md),
+[`PROJECT.md`](PROJECT.md), and — for anything GitHub, AI or completion — [`CORE.md`](CORE.md).
+
+| Phase | State |
+|-------|-------|
+| 0 · Clear the ground | ✅ |
+| 1 · Schema | ✅ |
+| 2 · Panels, landing, route guards | ✅ |
+| 3 · Projects, without AI | ✅ built and tested — see its status note for what is unverified |
+| **3a · GitHub owner model** | 🔲 **next.** Fully specified below; Q12 and Q13 are answered, nothing is blocking it |
+| 4 – 9 | 🔲 not started. Phase 8 may run in parallel |
+
+**Verify before you trust this table** — facts that change outside the docs:
+- `git log --oneline -5` and `git status` — what is committed; untracked files are
+  how Phase 2 once went missing from `main`.
+- `cd backend && .venv/bin/python -m pytest -q` — 232 passing at handoff. The suite
+  uses its own `trace_test` database (built by Alembic) and fakes GitHub and MinIO,
+  so it is safe to run anywhere.
+- `cd frontend && npm run build` — must pass.
+
+**Environment traps**
+- **Production may be running on the development machine**, from the same working
+  tree and the **same database** (`APP_ENV=production` in the root `.env`, served at
+  `PRODUCTION_URL` through the Cloudflare tunnel — README → Production). Before
+  running `./start.sh`, `alembic upgrade` against the main database, or anything that
+  binds ports 5173 / 8000, check `./start.sh status` and ask the user. Production does
+  not hot-reload: code changes go live only on restart. At handoff, the running
+  production process predates Phase 3.
+- The root `.env` is the only env file (AGENTS.md §4). `GITHUB_TOKEN` is empty at
+  handoff, so creating a task answers 503 until Phase 3a or a token in `.env`.
+- Only the Admin can create Admin / Manager accounts. Production does not seed demo
+  users, and refuses to start while any seeded account still has its published
+  password — change them with `./start.sh set-password <email>` (README → Production).
+
+**Known gaps, deliberately left** (each is also in its phase or `PROJECT.md` §24)
+- Phase 3 screens have never been clicked through in a browser — do that first when
+  a free port is available, using the tests' flows as the script.
+- `services/scoring_service.py` still reads the dropped `Task.assigned_to` —
+  `/productivity/compute*` will fail until Phase 5 step 3 re-bases scoring.
+- `components/ServiceMonitor.jsx` (opened from the Admin header) links to Mailpit,
+  MinIO and pgAdmin at `localhost`, which is wrong on the public URL — Phase 8.
+- Tree, Gantt, Progress Report and Project Doc tabs are placeholders — Phases 4–5.
+- Old pages `AttendancePage`, `EmployeesPage`, `ProductivityPage`, `AdminPanelPage`,
+  `FilesPage`, `SettingsPage` are unrouted; Phase 8 rebuilds or deletes them.
+
+---
+
 **Rules for every phase**
 - **Every feature you implement, modify or remove requires its documentation
   updated in the same change.** The full map of what to update is at the top of
@@ -23,11 +72,11 @@
 
 **Dependency graph**
 ```
-Phase 0 ─► Phase 1 ─► Phase 2 ─┐
-                     Phase 3 ─┼─► Phase 4 ─► Phase 5 ─► Phase 6 ─► Phase 7
-                              └─────────────────────────────────► Phase 8 ─► Phase 9
+Phase 0 ─► Phase 1 ─► Phase 2 ─► Phase 3 ─► Phase 3a ─► Phase 4 ─► Phase 5 ─► Phase 6 ─► Phase 7
+                          │
+                          └────────────────────────────────────────► Phase 8 ─► Phase 9
 ```
-Phase 8 needs only 0–2 and may run in parallel with 4–7. Phase 6 must not start
+Phase 8 needs only 0–2 and may run in parallel with 3–7 (its GitHub section is Phase 3a). Phase 6 must not start
 before Phase 5 — completion resolution depends on the AI service layer.
 
 ---
@@ -246,7 +295,28 @@ logged-out visitor sees the landing page.
 
 ---
 
-## Phase 3 — Projects, without AI
+## Phase 3 — Projects, without AI ✅
+
+*Status: built and tested 2026-09-26 (232 backend tests; frontend builds). Not yet
+checked in a browser — production occupies the local ports — and not yet live until
+production restarts. Step 3's repository and credential handling is being reworked
+by **Phase 3a** below.*
+
+- *Backend:* `api/v1/projects.py` (projects, source files, team, candidates, task
+  groups, project tasks) and a rewritten `api/v1/tasks.py` (task by id, assign,
+  status, delete, `/tasks/mine`). Authorisation in `core/project_access.py`;
+  rules in `services/project_service.py`; GitHub in `services/github_service.py`;
+  MinIO in `services/storage.py`; extraction in `services/extraction.py`.
+- *The legacy `/tasks` router is gone.* It let any signed-in user set `Completed`
+  through `PATCH /tasks/{id}` or `/status`, and most handlers referenced dropped
+  columns. `task_service.py`, `schemas/task.py`, `TasksPage.jsx` and
+  `DashboardPage.jsx` were deleted with it.
+- *Frontend:* `ProjectSelector`, Manager dashboard / create stepper / project
+  detail, Employee dashboard / project (PM and Member tabs) / task detail, GitHub
+  username on the Employee profile.
+- *Tests:* `tests/api/v1/test_projects.py` against a fake GitHub on
+  `httpx.MockTransport` — the real client runs, only the network is fake.
+  An autouse fixture keeps every test away from real GitHub and MinIO.
 
 Build the full manual path first, so the AI layer has something real to plug into.
 
@@ -268,8 +338,59 @@ Build the full manual path first, so the AI layer has something real to plug int
 create tasks that appear as GitHub issues — with no AI involved at all.
 
 **Tests:** the legacy `tests/api/v1/test_tasks_attendance.py` was removed in Phase 2
-(it exercised clock-in/out and the tree-era `/tasks` router). Phase 3 writes the
-project-scoped task tests, including the Member-gets-403 completion rule.
+(it exercised clock-in/out and the tree-era `/tasks` router); Phase 3's
+`test_projects.py` replaces it, including the Member-gets-403 completion rule.
+
+---
+
+## Phase 3a — GitHub owner model
+
+**Read [`CORE.md`](CORE.md) §4.1 first.** Decided 2026-09-26: TRACE uses one
+company GitHub **Organization** (Q12) and one token, entered by the Admin, and
+creates every project's repository itself, **always public** (Q13). This pulls the
+GitHub part of Phase 8's Configuration screen forward, because no task can be
+created without it. No schema change is needed.
+
+1. **Secret storage.** Encrypt `system_settings` rows with `is_secret` at rest:
+   Fernet from `cryptography` (add it to `requirements.txt` — it is not installed
+   today), key in `.env` as `SETTINGS_ENCRYPTION_KEY`. Decrypt only inside
+   `resolve_setting()`. Add the key to the production preflight
+   (`Settings.production_problems()`). No API ever returns a secret — responses
+   carry `"token_set": true|false`.
+2. **Settings API** (Admin): `GET/PUT /admin/settings/github` over `github.owner`,
+   `github.token`, `github.committer_name`, `github.committer_email`;
+   `POST /admin/settings/github/test` → `GET /user` (token authenticates) and
+   `GET /orgs/{org}` (organization visible). Add `("github", "owner"): "GITHUB_OWNER"`
+   to `ENV_FALLBACKS` in `services/system_settings.py`, and `GITHUB_OWNER` to
+   `config.py` and `.env.example`.
+3. **Admin → Configuration → GitHub** in `pages/admin/ConfigurationPage.jsx`
+   (a placeholder today): organization, token (write-only field, "set" indicator),
+   committer name and email, Test connection.
+4. **Repo creation.** `GitHubClient.create_repo(org, name, description)` →
+   `POST /orgs/{org}/repos` with `private: false, auto_init: true, has_issues: true`.
+   In `create_project`: slugify the name (lowercase, `[a-z0-9-]`, ≤100 chars),
+   create the repo *before* committing the project row and roll back on failure —
+   the same pattern as task ↔ issue in `project_service.create_task`. Name clash
+   (GitHub 422 "name already exists") → 409 naming the slug. Drop `github_repo`
+   from `ProjectCreate` and from the stepper's details step; show the slug on the
+   review step with a "documents will be public" note. Keep `github_repo` editable
+   in `ProjectUpdate` only for projects created before this phase.
+5. **Collaborators.** `add_collaborator(repo, username)` →
+   `PUT /repos/{repo}/collaborators/{username}` with `permission: "push"` (201 =
+   invitation sent, 204 = already a collaborator); `remove_collaborator` →
+   `DELETE` the same path, plus `DELETE /repos/{repo}/invitations/{id}` for a
+   pending invitation. Call add from `assign_project_manager` and
+   `project_service.ensure_member`; call remove when a PM is removed with no tasks
+   left. A missing `github_username` is a warning, not a failure. When GitHub
+   rejects an issue assignee (invitation not yet accepted), create the issue
+   unassigned and warn "invitation pending" — never fail the task.
+6. **Tests** against the `fake_github` fixture in `tests/conftest.py` — extend
+   `FakeGitHub` with the org, repo, collaborator and invitation routes. Docs in
+   the same change: flip the three 🔲 GitHub rows in `PROJECT.md` §24.
+
+**Done when:** an Admin enters the company token once, a Manager creates a project
+without typing a repository, and the Project Manager's first task opens an issue in
+the repository TRACE created.
 
 ---
 
@@ -347,8 +468,8 @@ right people without anyone refreshing a page.
 
 May run in parallel with Phases 4–7.
 
-1. The Configuration screen over `system_settings` — mail, AI, GitHub, CI/CD —
-   with masked secrets and per-section connection tests.
+1. The Configuration screen over `system_settings` — mail, AI, CI/CD (GitHub
+   already built in Phase 3a) — with write-only secrets and per-section connection tests.
 2. Workforce consolidation into one curated UI with tabs for employees, managers,
    leaves, holidays, **attendance, shifts**, departments and designations. Every
    tab gets CRUD plus **bulk upload** that reports rejected rows instead of failing

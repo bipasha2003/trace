@@ -130,11 +130,38 @@ recorded in the system but is deliberately **not** a ranking input.
 1. Persist the `tasks` row against its `task_group_id`.
 2. **Create the GitHub issue** in `projects.github_repo`; store `github_issue_id`
    and `github_issue_url`. Task creation *is* issue creation — the two are never
-   allowed to drift apart.
+   allowed to drift apart: both happen in one request, and a GitHub failure rolls
+   the task back. With no GitHub token configured, task creation is refused (503).
 3. If a Member is assigned: **assign the GitHub issue** to their mapped GitHub
    account, upsert a `project_assignments` row with role `Member`, and emit a
-   `task_assigned` notification.
+   `task_assigned` notification. A Member with no `github_username` — or who has
+   not yet accepted the repository invitation (§4.1) — gets an unassigned issue
+   and the Project Manager gets a warning, never a failure.
 4. Enqueue `generate_task_progress_doc`.
+
+Status follows the issue: `Completed` / `Cancelled` close it (`completed` /
+`not_planned`), reopening a task reopens it, deleting a task closes it as
+`not_planned`.
+
+### 4.1 GitHub access — one owner, one token *(decided 2026-09-26; §24 tracks build status)*
+
+TRACE acts on GitHub as **one company account**, not as individual users.
+
+| Piece | Rule |
+|-------|------|
+| **Owner** | One GitHub **Organization** per TRACE installation (Q12) — per-repo *Write* permission, central removal. Personal accounts are not supported. Stored as `system_settings` `github.owner` (the organization login) |
+| **Token** | Entered by the Admin in **Admin → Configuration → GitHub**, stored as `github.token` — `is_secret`, **encrypted at rest**, **write-only**: never returned by any API, only shown masked. `.env` `GITHUB_TOKEN` is the fallback |
+| **Token scope** | A **fine-grained** token limited to that owner: Administration *read/write* (create repos), Contents *read/write* (commit documents), Issues *read/write*, Metadata *read*. Not a classic full-access token |
+| **Test connection** | Checks the token authenticates and can see the organization, before any project depends on it. (A fine-grained token's permissions cannot be read back, so repo-creation rights are proven by the first project creation, which must fail with a precise message) |
+| **Repositories** | **TRACE creates one repo per project** when the Manager creates the project: `<org>/<project-slug>`, **always public** (Q13). The Manager no longer types a repo. A name clash is reported, never silently reused |
+| **Public by design** | Because every repo is public, issues, generated documents (including `project_initial_doc`, the AI's summary of the requirements) and commit history are world-readable. Source files stay private in MinIO. TRACE is an educational project; say so in the UI where requirements are uploaded, and never put secrets in them |
+| **Collaborators** | When someone joins a project — appointed Project Manager, or first assigned a task — TRACE **invites their `github_username`** to the repo with *Write*. GitHub emails an invitation they must accept; until then their issues are created unassigned (step 3 above). Leaving the project revokes the access |
+| **Commit identity** | Commits TRACE makes (generated documents) carry `github.committer_name` / `github.committer_email` |
+
+Every GitHub call goes through `app/services/github_service.py`, and every
+credential through `resolve_setting()` (database value, then `.env`). A GitHub
+App — short-lived tokens, not tied to a person — is the long-term replacement for
+the token (`PLANNING.md` §3.5).
 
 **Job `generate_task_progress_doc(task_id)`** — the LLM writes the task's
 step-by-step plan and completion checklist, commits it to the repo, and stores the

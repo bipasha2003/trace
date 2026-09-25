@@ -34,10 +34,14 @@ import AdminSettingsPage from './pages/admin/AdminSettingsPage'
 // Manager pages
 import ManagerDashboardPage from './pages/manager/ManagerDashboardPage'
 import ManagerSettingsPage from './pages/manager/ManagerSettingsPage'
+import ProjectCreatePage from './pages/manager/ProjectCreatePage'
+import ManagerProjectDetailPage from './pages/manager/ProjectDetailPage'
 
 // Employee pages
 import EmployeeDashboardPage from './pages/employee/EmployeeDashboardPage'
 import EmployeeSettingsPage from './pages/employee/EmployeeSettingsPage'
+import EmployeeProjectDetailPage from './pages/employee/ProjectDetailPage'
+import TaskDetailPage from './pages/employee/TaskDetailPage'
 
 function App() {
   return (
@@ -74,8 +78,9 @@ function App() {
       <Route element={<RoleRoute role="Manager" />}>
         <Route element={<ManagerLayout />}>
           <Route path="/manager" element={<ManagerDashboardPage />} />
+          <Route path="/manager/projects/new" element={<ProjectCreatePage />} />
+          <Route path="/manager/projects/:id" element={<ManagerProjectDetailPage />} />
           <Route path="/manager/settings" element={<ManagerSettingsPage />} />
-          {/* Phase 3: /manager/projects/new, /manager/projects/:id */}
         </Route>
       </Route>
 
@@ -83,8 +88,9 @@ function App() {
       <Route element={<RoleRoute role="Employee" />}>
         <Route element={<EmployeeLayout />}>
           <Route path="/employee" element={<EmployeeDashboardPage />} />
+          <Route path="/employee/projects/:id" element={<EmployeeProjectDetailPage />} />
+          <Route path="/employee/tasks/:taskId" element={<TaskDetailPage />} />
           <Route path="/employee/settings" element={<EmployeeSettingsPage />} />
-          {/* Phase 3: /employee/projects/:id, /employee/tasks/:taskId */}
         </Route>
       </Route>
 
