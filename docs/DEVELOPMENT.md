@@ -227,6 +227,10 @@ API and the UI, and the workforce endpoints in 0.4 still respond.
 
 *Status: Completed 2026-09-25. Three panel layouts (AdminLayout sidebar, ManagerLayout/EmployeeLayout topbar-only) built. GuestOnlyRoute and RoleRoute guards implemented. /403 ForbiddenPage built — shows role info, never silently redirects. LoginPage redirects to role-based base route. LandingPage built with hero, problem statement, 3-step how-it-works, feature grid, CTA and footer. Admin sidebar rewritten with static 5-item menu. MonitorPage promoted from header overlay to full /admin/monitor page. Stub panel pages in place for Phase 3 wiring. Frontend build passes with exit code 0.*
 
+*Step 6 completed 2026-09-25 (the frontend files above only reached `main` in commit `c1f915a`). Every route now carries a platform-role guard: `/hrms`, `/attendance`, `/productivity`, the workforce writes and lists in `/employees`, and the `/services` health, test-mail, MinIO and LLM endpoints are Admin-only; `/services/task/{id}/result`, `/employees/me`, the department and designation lists and the legacy `/tasks` router require any signed-in role. The only unauthenticated routes are `/health`, `/auth/login`, `/auth/refresh` and `/auth/register` — and self-registration now always creates an `Employee`; only an Admin may create Admin or Manager accounts.*
+
+*Verified 2026-09-25 by `backend/tests` (162 passing): a static audit that every route is guarded, a role matrix over real endpoints for Admin / Manager / Employee / anonymous, the registration rules, and a migration test that takes an **empty** database to head with no autogenerate drift. That last one needed a catch-up revision (`0a1c2e3f4d5b`) — see [`PLANNING.md`](PLANNING.md) §2.*
+
 1. Split `DashboardLayout` into `AdminLayout` (sidebar), `ManagerLayout` and
    `EmployeeLayout` (topbar only).
 2. Build `RoleRoute`, `GuestOnlyRoute`, the `/403` page, and the `/` → base-route
@@ -262,6 +266,10 @@ Build the full manual path first, so the AI layer has something real to plug int
 
 **Done when:** a Manager can create a project and assign a PM, and that PM can
 create tasks that appear as GitHub issues — with no AI involved at all.
+
+**Tests:** the legacy `tests/api/v1/test_tasks_attendance.py` was removed in Phase 2
+(it exercised clock-in/out and the tree-era `/tasks` router). Phase 3 writes the
+project-scoped task tests, including the Member-gets-403 completion rule.
 
 ---
 
@@ -377,4 +385,4 @@ work in [`PLANNING.md`](PLANNING.md) §3:
 | Bulk task creation from AI suggestions | Phase 5 follow-up | Single-task acceptance first |
 | Pagination, global search | Phase 9 | Lists are short at demo scale |
 | 2FA, session management, token refresh | Post-launch | Pre-existing backlog, unaffected by the re-spec |
-| Docker production build, HTTPS | Post-launch | Dev mode is sufficient until Phase 6 lands |
+| Docker production build | Post-launch | `APP_ENV=production` already serves a built frontend over HTTPS through the Cloudflare tunnel; containerising the app itself can wait |

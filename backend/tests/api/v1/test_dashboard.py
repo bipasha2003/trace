@@ -8,9 +8,9 @@ from httpx import AsyncClient
 
 
 @pytest.mark.asyncio
-async def test_dashboard_stats_admin(client: AsyncClient, auth_headers: dict):
+async def test_dashboard_stats_admin(client: AsyncClient, admin_headers: dict):
     """Admin can access dashboard stats."""
-    resp = await client.get("/api/v1/dashboard/stats", headers=auth_headers)
+    resp = await client.get("/api/v1/dashboard/stats", headers=admin_headers)
     assert resp.status_code == 200
     data = resp.json()
 
@@ -23,20 +23,29 @@ async def test_dashboard_stats_admin(client: AsyncClient, auth_headers: dict):
 
 
 @pytest.mark.asyncio
-async def test_dashboard_stats_staff_forbidden(
-    client: AsyncClient, staff_auth_headers: dict,
+async def test_dashboard_stats_employee_forbidden(
+    client: AsyncClient, employee_headers: dict,
 ):
-    """Staff cannot access admin dashboard."""
-    resp = await client.get("/api/v1/dashboard/stats", headers=staff_auth_headers)
+    """Employees cannot access admin dashboard."""
+    resp = await client.get("/api/v1/dashboard/stats", headers=employee_headers)
     assert resp.status_code == 403
 
 
 @pytest.mark.asyncio
-async def test_weekly_summary_admin(client: AsyncClient, auth_headers: dict):
+async def test_dashboard_stats_manager_forbidden(
+    client: AsyncClient, manager_headers: dict,
+):
+    """Productivity and reports fold into Admin → Reports (PROJECT.md §23)."""
+    resp = await client.get("/api/v1/dashboard/stats", headers=manager_headers)
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_weekly_summary_admin(client: AsyncClient, admin_headers: dict):
     """Admin can access weekly summary."""
     resp = await client.get(
         "/api/v1/reports/weekly-summary",
-        headers=auth_headers,
+        headers=admin_headers,
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -46,11 +55,11 @@ async def test_weekly_summary_admin(client: AsyncClient, auth_headers: dict):
 
 
 @pytest.mark.asyncio
-async def test_attendance_summary_admin(client: AsyncClient, auth_headers: dict):
+async def test_attendance_summary_admin(client: AsyncClient, admin_headers: dict):
     """Admin can access daily attendance summary."""
     resp = await client.get(
         "/api/v1/reports/attendance-summary",
-        headers=auth_headers,
+        headers=admin_headers,
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -61,11 +70,11 @@ async def test_attendance_summary_admin(client: AsyncClient, auth_headers: dict)
 
 
 @pytest.mark.asyncio
-async def test_weekly_html_report(client: AsyncClient, auth_headers: dict):
+async def test_weekly_html_report(client: AsyncClient, admin_headers: dict):
     """Admin can generate HTML report."""
     resp = await client.get(
         "/api/v1/reports/weekly-html",
-        headers=auth_headers,
+        headers=admin_headers,
     )
     assert resp.status_code == 200
     assert "TRACE Weekly Performance Report" in resp.text
@@ -73,12 +82,12 @@ async def test_weekly_html_report(client: AsyncClient, auth_headers: dict):
 
 
 @pytest.mark.asyncio
-async def test_reports_staff_forbidden(
-    client: AsyncClient, staff_auth_headers: dict,
+async def test_reports_employee_forbidden(
+    client: AsyncClient, employee_headers: dict,
 ):
-    """Staff cannot access reports."""
+    """Employees cannot access reports."""
     resp = await client.get(
         "/api/v1/reports/weekly-summary",
-        headers=staff_auth_headers,
+        headers=employee_headers,
     )
     assert resp.status_code == 403

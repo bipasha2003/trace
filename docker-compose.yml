@@ -14,7 +14,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-trace_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trace_password}
     ports:
-      - "${DB_PORT:-5432}:5432"
+      - "${DB_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -49,7 +49,7 @@ services:
     volumes:
       - ./backend:/app
     env_file:
-      - ./backend/.env
+      - ./.env
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-trace_user}:${POSTGRES_PASSWORD:-trace_password}@db:5432/${POSTGRES_DB:-trace_db}
       REDIS_URL: redis://redis:6379/0
@@ -70,7 +70,7 @@ services:
     volumes:
       - ./backend:/app
     env_file:
-      - ./backend/.env
+      - ./.env
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-trace_user}:${POSTGRES_PASSWORD:-trace_password}@db:5432/${POSTGRES_DB:-trace_db}
       REDIS_URL: redis://redis:6379/0
@@ -91,7 +91,7 @@ services:
     volumes:
       - ./backend:/app
     env_file:
-      - ./backend/.env
+      - ./.env
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-trace_user}:${POSTGRES_PASSWORD:-trace_password}@db:5432/${POSTGRES_DB:-trace_db}
       REDIS_URL: redis://redis:6379/0
@@ -166,6 +166,21 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-trace_minio}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-trace_minio_secret}
+
+  # ── Cloudflare Tunnel (APP_ENV=production only) ────────────
+  # Started by `./start.sh start` when APP_ENV=production. Host networking,
+  # because the app runs on the host (start.sh), not in these containers:
+  # tunnel routes in the Cloudflare dashboard therefore point at
+  # http://localhost:5173, not at container names.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: trace_cloudflared
+    profiles: ["production"]
+    restart: unless-stopped
+    network_mode: host
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}  # required; checked by start.sh
 
 volumes:
   postgres_data:

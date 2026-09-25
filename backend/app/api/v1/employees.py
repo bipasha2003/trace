@@ -1,13 +1,14 @@
 """
 TRACE - Employees API Router
 Endpoints for employee, department, and work schedule management.
-RBAC: Admin/Manager can create/update/delete. All authenticated users can read.
+RBAC: the workforce record set is Admin-owned (PROJECT.md §9.1). Any authenticated
+user may read their own record and the department / designation reference lists.
 """
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.permissions import require_admin, require_manager_or_admin
+from app.core.permissions import require_admin
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import User
@@ -46,7 +47,7 @@ router = APIRouter(tags=["Employees"])
 )
 async def create_designation(
     data: DesignationCreate,
-    current_user: User = Depends(require_manager_or_admin),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     service = DesignationService(db)
@@ -94,7 +95,7 @@ async def delete_designation(
 )
 async def create_department(
     data: DepartmentCreate,
-    current_user: User = Depends(require_manager_or_admin),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     service = DepartmentService(db)
@@ -155,7 +156,7 @@ async def delete_department(
 )
 async def create_work_schedule(
     data: WorkScheduleCreate,
-    current_user: User = Depends(require_manager_or_admin),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     service = WorkScheduleService(db)
@@ -168,7 +169,7 @@ async def create_work_schedule(
     summary="List all work schedules",
 )
 async def list_work_schedules(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     service = WorkScheduleService(db)
@@ -182,7 +183,7 @@ async def list_work_schedules(
 )
 async def get_work_schedule(
     schedule_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     service = WorkScheduleService(db)
@@ -202,7 +203,7 @@ async def get_work_schedule(
 )
 async def create_employee(
     data: EmployeeCreate,
-    current_user: User = Depends(require_manager_or_admin),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     service = EmployeeService(db)
@@ -220,7 +221,7 @@ async def list_employees(
     per_page: int = Query(20, ge=1, le=100),
     department_id: int | None = None,
     emp_status: str | None = Query(None, alias="status"),
-    current_user: User = Depends(require_manager_or_admin),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     service = EmployeeService(db)
@@ -250,7 +251,7 @@ async def get_my_employee_record(
 )
 async def get_employee(
     employee_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     service = EmployeeService(db)
@@ -266,7 +267,7 @@ async def get_employee(
 async def update_employee(
     employee_id: int,
     data: EmployeeUpdate,
-    current_user: User = Depends(require_manager_or_admin),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     service = EmployeeService(db)

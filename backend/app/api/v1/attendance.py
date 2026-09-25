@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.permissions import require_admin
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.exceptions import NotFoundException
@@ -16,7 +17,8 @@ from app.models.user import User
 from app.schemas.attendance import AttendanceResponse, AttendanceListResponse
 from app.services.attendance_service import AttendanceService
 
-router = APIRouter(prefix="/attendance", tags=["Attendance"])
+# Attendance records are Admin-owned — PROJECT.md §9.1
+router = APIRouter(prefix="/attendance", tags=["Attendance"], dependencies=[Depends(require_admin)])
 
 
 async def _get_employee(user: User, db: AsyncSession) -> Employee:
@@ -108,7 +110,7 @@ async def all_employees_attendance(
         select(Attendance, Employee)
         .join(Employee, Employee.id == Attendance.employee_id)
         .where(*filters)
-        .order_by(Attendance.attendance_date.desc(), Attendance.check_in.desc())
+        .order_by(Attendance.attendance_date.desc(), Attendance.time_in.desc())
         .offset(offset).limit(per_page)
     )
     rows = result.all()
@@ -120,12 +122,11 @@ async def all_employees_attendance(
             "employee_id": att.employee_id,
             "employee_code": emp.employee_code,
             "attendance_date": att.attendance_date.isoformat() if att.attendance_date else None,
-            "check_in": att.check_in.isoformat() if att.check_in else None,
-            "check_out": att.check_out.isoformat() if att.check_out else None,
+            "check_in": att.time_in.isoformat() if att.time_in else None,
+            "check_out": att.time_out.isoformat() if att.time_out else None,
             "total_hours": float(att.total_hours) if att.total_hours else None,
             "location": att.location,
             "location_status": att.location_status,
-            "status": att.status,
         })
 
     return {"records": records, "total": count, "page": page, "per_page": per_page}

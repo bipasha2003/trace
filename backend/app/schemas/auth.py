@@ -3,6 +3,8 @@ TRACE - Authentication Schemas
 Pydantic models for login, register, and token operations.
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, EmailStr, Field
 
 
@@ -16,7 +18,8 @@ class RegisterRequest(BaseModel):
     password: str = Field(..., min_length=8, max_length=128, examples=["SecurePass123!"])
     phone: str | None = Field(None, max_length=20, examples=["+91-9876543210"])
     gender: str | None = Field(None, max_length=20, examples=["Female"])
-    role: str = Field(default="Staff", examples=["Staff"])  # Admin, Manager, Staff
+    # Only an Admin may create Admin or Manager accounts — enforced in the route
+    role: Literal["Admin", "Manager", "Employee"] = Field(default="Employee", examples=["Employee"])
 
 
 class LoginRequest(BaseModel):

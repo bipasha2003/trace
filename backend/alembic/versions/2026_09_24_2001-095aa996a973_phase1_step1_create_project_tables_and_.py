@@ -1,7 +1,7 @@
 """phase1_step1_create_project_tables_and_alter_tasks
 
 Revision ID: 095aa996a973
-Revises: 14ba665ad4fe
+Revises: 0a1c2e3f4d5b
 Create Date: 2026-09-24 20:01:41.751133
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = '095aa996a973'
-down_revision: Union[str, None] = '14ba665ad4fe'
+down_revision: Union[str, None] = '0a1c2e3f4d5b'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

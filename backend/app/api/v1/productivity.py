@@ -1,7 +1,7 @@
 """
 TRACE - Productivity, Reporting & Admin Dashboard API Router
 Endpoints for AI scoring, weekly reports, admin dashboard, and analytics.
-RBAC: All endpoints require Manager/Admin role.
+RBAC: Admin only — scores fold into Admin → Reports (PROJECT.md §23).
 """
 
 from datetime import date
@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.responses import HTMLResponse
 
-from app.core.permissions import require_manager_or_admin
+from app.core.permissions import require_admin, require_manager_or_admin
 from app.dependencies import get_current_user
 from app.database import get_db
 from app.models.user import User
@@ -23,7 +23,7 @@ from app.schemas.productivity import ProductivityScoreResponse
 from app.services.scoring_service import ScoringService
 from app.services.report_service import ReportService
 
-router = APIRouter(tags=["Productivity & Reports"])
+router = APIRouter(tags=["Productivity & Reports"], dependencies=[Depends(require_admin)])
 
 
 # ══════════════════════════════════════════════════════════════════

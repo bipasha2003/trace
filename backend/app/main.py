@@ -25,20 +25,28 @@ logger = logging.getLogger("trace")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan — runs seeds on startup."""
-    # ── Startup: auto-migrate tables and seed reference data ─────
-    from app.database import engine, Base
-    from app.models import __init__  # noqa: F401 — ensure all models are imported
+    """Application lifespan — seeds reference data on startup.
 
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Database tables ensured.")
+    The schema is owned by Alembic alone (`./start.sh migrate`). Never call
+    `Base.metadata.create_all` here: it builds tables no revision knows about,
+    and a fresh database then cannot reach head.
+    """
+    from app.database import async_session_factory
+    from app.seeds import accounts_with_seed_passwords, run_seeds
 
     try:
-        from app.seeds import run_seeds
         await run_seeds()
     except Exception as e:
         logger.warning(f"Seed script encountered an issue: {e}")
+
+    if settings.is_production:
+        async with async_session_factory() as db:
+            weak = await accounts_with_seed_passwords(db)
+        if weak:
+            raise RuntimeError(
+                "APP_ENV=production refused: these accounts still use their published seed "
+                f"password: {', '.join(weak)}. Change each with `./start.sh set-password <email>`."
+            )
 
     yield
 

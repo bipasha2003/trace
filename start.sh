@@ -11,7 +11,10 @@
 #   migrate  - Run database migrations (Alembic)
 #   restart  - Restart all services (stop + start)
 #   status   - Check status of containers and services
+#   set-password <email> - Set a user's password
 #   help     - Show this help menu
+#
+# APP_ENV (root .env) selects local or production; see load_app_env.
 # ============================================
 
 set -e
@@ -29,6 +32,63 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 BOLD='\033[1m'
 NC='\033[0m'
+
+# ── Environment (APP_ENV) ─────────────────────────────────────
+# The one place this script decides local vs production. Everything below asks
+# is_production; nothing else reads APP_ENV. Python code has its own single
+# check, Settings.is_production in backend/app/config.py.
+env_value() {
+    # Read KEY from the root .env without sourcing it
+    [ -f "$ROOT_DIR/.env" ] || return 0
+    grep -E "^$1=" "$ROOT_DIR/.env" | tail -1 | cut -d= -f2- | sed -e 's/^["'\'']//' -e 's/["'\'']$//'
+}
+
+load_app_env() {
+    APP_ENV="${APP_ENV:-$(env_value APP_ENV)}"
+    APP_ENV="${APP_ENV:-local}"
+    case "$APP_ENV" in
+        local|production) ;;
+        *) echo -e "${RED}❌ APP_ENV must be 'local' or 'production', got '$APP_ENV'${NC}"; exit 1 ;;
+    esac
+    PRODUCTION_URL="$(env_value PRODUCTION_URL)"
+    PRODUCTION_URL="${PRODUCTION_URL#https://}"; PRODUCTION_URL="${PRODUCTION_URL#http://}"; PRODUCTION_URL="${PRODUCTION_URL%/}"
+    export APP_ENV
+}
+
+is_production() { [ "$APP_ENV" = "production" ]; }
+
+# Compose args: the production profile adds the cloudflared tunnel
+compose() {
+    if is_production; then
+        docker compose -f "$ROOT_DIR/docker-compose.yml" --profile production "$@"
+    else
+        docker compose -f "$ROOT_DIR/docker-compose.yml" "$@"
+    fi
+}
+
+# Refuse to expose the stack publicly with development settings
+preflight_production() {
+    echo -e "${CYAN}🔒 Production preflight...${NC}"
+    local failed=0
+    if [ -z "$(env_value CLOUDFLARE_TUNNEL_TOKEN)" ]; then
+        echo -e "${RED}  ✗ CLOUDFLARE_TUNNEL_TOKEN is empty in .env${NC}"; failed=1
+    fi
+    if [ -z "$PRODUCTION_URL" ]; then
+        echo -e "${RED}  ✗ PRODUCTION_URL is empty in .env${NC}"; failed=1
+    fi
+    # Backend settings validation (DEBUG, JWT secret, ...) — see Settings._production_preflight
+    if ! (cd "$BACKEND_DIR" && "$VENV_DIR/bin/python" -c "from app.config import get_settings; get_settings()" 2>&1 \
+            | grep -E "^RuntimeError: |^  - " | sed "s/^/  /"; exit "${PIPESTATUS[0]}"); then
+        failed=1
+    fi
+    if [ "$failed" -ne 0 ]; then
+        echo -e "${RED}❌ Not starting in production. Fix the above, or set APP_ENV=local.${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}  ✓ passed${NC}"
+}
+
+load_app_env
 
 # ── Banner Helper ─────────────────────────────────────────────
 print_banner() {
@@ -90,11 +150,19 @@ ensure_env() {
 
 # ── Function: Start Services ──────────────────────────────────
 do_start() {
-    print_banner "Starting Up..."
+    print_banner "Starting Up ($APP_ENV)..."
 
-    # 1. Start Docker Services
-    echo -e "${CYAN}🐳 Starting Docker infrastructure (DB, Redis, pgAdmin, Mailpit, MinIO)...${NC}"
-    docker compose -f "$ROOT_DIR/docker-compose.yml" up -d db redis pgadmin mailpit minio 2>&1 | tail -8
+    # 0. Environment prerequisites, then (production only) the preflight
+    ensure_env
+    if is_production; then
+        preflight_production
+    fi
+
+    # 1. Start Docker Services (+ the Cloudflare tunnel in production)
+    local infra="db redis pgadmin mailpit minio"
+    if is_production; then infra="$infra cloudflared"; fi
+    echo -e "${CYAN}🐳 Starting Docker services: $infra${NC}"
+    compose up -d $infra 2>&1 | tail -8
 
     wait_for_db
     wait_for_redis
@@ -103,8 +171,9 @@ do_start() {
     echo -e "${GREEN}✅ Mailpit  → http://localhost:8025${NC}"
     echo -e "${GREEN}✅ MinIO    → http://localhost:9001${NC}"
 
-    # 2. Check Virtualenv & Node modules
-    ensure_env
+    # 3. Bring the schema to head — Alembic is the only thing that creates tables
+    echo -e "${CYAN}⚡ Running Alembic migration (upgrade head)...${NC}"
+    (cd "$BACKEND_DIR" && "$VENV_DIR/bin/alembic" upgrade head)
 
     # Cleanup function on Ctrl+C or EXIT in foreground
     cleanup_fg() {
@@ -129,9 +198,12 @@ do_start() {
     # 3. Start Backend (FastAPI)
     echo ""
     echo -e "${CYAN}🚀 Starting Backend (FastAPI) on http://localhost:8000${NC}"
+    # Production binds loopback only — the tunnel is the way in — and drops --reload
+    local uvicorn_args="--reload --host 0.0.0.0 --port 8000"
+    if is_production; then uvicorn_args="--host 127.0.0.1 --port 8000"; fi
     (
         cd "$BACKEND_DIR"
-        exec "$VENV_DIR/bin/uvicorn" app.main:app --reload --host 0.0.0.0 --port 8000 2>&1 | \
+        exec "$VENV_DIR/bin/uvicorn" app.main:app $uvicorn_args 2>&1 | \
             sed "s/^/  [backend] /"
     ) &
     BACKEND_PID=$!
@@ -159,12 +231,23 @@ do_start() {
     CELERY_B_PID=$!
     echo "$CELERY_B_PID" >> "$PID_FILE"
 
-    # 6. Start Frontend (Vite)
-    echo -e "${CYAN}🚀 Starting Frontend (Vite) on http://localhost:5173${NC}"
-    (
-        cd "$FRONTEND_DIR"
-        exec npm run dev 2>&1 | sed "s/^/  [frontend] /"
-    ) &
+    # 6. Start Frontend — dev server locally; built bundle via `vite preview` in
+    #    production, never the dev server on a public hostname
+    if is_production; then
+        echo -e "${CYAN}🏗️  Building frontend for production...${NC}"
+        (cd "$FRONTEND_DIR" && npm run build 2>&1 | tail -3)
+        echo -e "${CYAN}🚀 Serving built frontend (vite preview) on http://127.0.0.1:5173${NC}"
+        (
+            cd "$FRONTEND_DIR"
+            exec npx vite preview 2>&1 | sed "s/^/  [frontend] /"
+        ) &
+    else
+        echo -e "${CYAN}🚀 Starting Frontend (Vite) on http://localhost:5173${NC}"
+        (
+            cd "$FRONTEND_DIR"
+            exec npm run dev 2>&1 | sed "s/^/  [frontend] /"
+        ) &
+    fi
     FRONTEND_PID=$!
     echo "$FRONTEND_PID" >> "$PID_FILE"
 
@@ -174,6 +257,9 @@ do_start() {
     echo -e "${GREEN}╔═════════════════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║          TRACE is running successfully! 🎉          ║${NC}"
     echo -e "${GREEN}╠═════════════════════════════════════════════════════╣${NC}"
+    if is_production; then
+    echo -e "${GREEN}║  Public   → ${CYAN}https://${PRODUCTION_URL}${NC}"
+    fi
     echo -e "${GREEN}║  Frontend → ${CYAN}http://localhost:5173${GREEN}                   ║${NC}"
     echo -e "${GREEN}║  Backend  → ${CYAN}http://localhost:8000${GREEN}                   ║${NC}"
     echo -e "${GREEN}║  API Docs → ${CYAN}http://localhost:8000/docs${GREEN}              ║${NC}"
@@ -181,10 +267,12 @@ do_start() {
     echo -e "${GREEN}║  Mailpit  → ${CYAN}http://localhost:8025${GREEN}                   ║${NC}"
     echo -e "${GREEN}║  MinIO    → ${CYAN}http://localhost:9001${GREEN}                   ║${NC}"
     echo -e "${GREEN}╠═════════════════════════════════════════════════════╣${NC}"
+    if ! is_production; then
     echo -e "${GREEN}║  Login:                                             ║${NC}"
     echo -e "${GREEN}║    Email:    ${YELLOW}admin@trace.com${GREEN}                        ║${NC}"
     echo -e "${GREEN}║    Password: ${YELLOW}Admin@123${GREEN}                              ║${NC}"
     echo -e "${GREEN}╠═════════════════════════════════════════════════════╣${NC}"
+    fi
     echo -e "${GREEN}║  Press ${RED}Ctrl+C${GREEN} or run ${CYAN}./start.sh stop${GREEN} to stop.  ║${NC}"
     echo -e "${GREEN}╚═════════════════════════════════════════════════════╝${NC}"
     echo ""
@@ -214,7 +302,7 @@ do_stop() {
 
     # 3. Stop Docker Containers
     echo -e "${CYAN}🐳 Stopping Docker containers...${NC}"
-    docker compose -f "$ROOT_DIR/docker-compose.yml" down --remove-orphans
+    docker compose -f "$ROOT_DIR/docker-compose.yml" --profile production down --remove-orphans
 
     echo ""
     echo -e "${GREEN}✅ All Docker containers and TRACE services have been stopped successfully.${NC}"
@@ -254,8 +342,13 @@ do_migrate() {
 do_status() {
     print_banner "Service Status"
 
+    echo -e "${BOLD}Environment:${NC} APP_ENV=${APP_ENV}"
+    if is_production; then
+        echo -e "  Public URL: https://${PRODUCTION_URL}  →  $(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "https://${PRODUCTION_URL}/" || echo unreachable)"
+    fi
+    echo ""
     echo -e "${BOLD}Docker Containers:${NC}"
-    docker compose -f "$ROOT_DIR/docker-compose.yml" ps
+    compose ps
 
     echo ""
     echo -e "${BOLD}Local Services:${NC}"
@@ -298,6 +391,7 @@ show_help() {
     echo "  migrate  - Run Alembic database migrations"
     echo "  restart  - Restart all services (stop + start)"
     echo "  status   - Show status of Docker containers and app services"
+    echo "  set-password <email> - Set a user's password (prompts for it)"
     echo "  help     - Show this help message"
     echo ""
 }
@@ -322,6 +416,10 @@ case "$COMMAND" in
         ;;
     status)
         do_status
+        ;;
+    set-password)
+        [ -n "$2" ] || { echo -e "${RED}Usage: ./start.sh set-password <email>${NC}"; exit 1; }
+        (cd "$BACKEND_DIR" && "$VENV_DIR/bin/python" -m app.cli set-password "$2")
         ;;
     help|-h|--help)
         show_help

@@ -16,11 +16,12 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Optional
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.config import get_settings
+from app.core.permissions import require_admin, require_any_role
 
 settings = get_settings()
 logger = logging.getLogger("trace.services")
@@ -54,7 +55,7 @@ class FileUploadResponse(BaseModel):
 #  HEALTH CHECK ENDPOINTS
 # ══════════════════════════════════════════════════════════════════
 
-@router.get("/health/all")
+@router.get("/health/all", dependencies=[Depends(require_admin)])
 async def all_service_health():
     """Aggregate health check for all services."""
     results = {}
@@ -92,42 +93,42 @@ async def all_service_health():
     }
 
 
-@router.get("/health/api")
+@router.get("/health/api", dependencies=[Depends(require_admin)])
 async def api_health():
     return {"status": "healthy", "service": "api", "app": settings.APP_NAME, "version": settings.APP_VERSION}
 
 
-@router.get("/health/database")
+@router.get("/health/database", dependencies=[Depends(require_admin)])
 async def database_health():
     return await _check_db_health()
 
 
-@router.get("/health/redis")
+@router.get("/health/redis", dependencies=[Depends(require_admin)])
 async def redis_health():
     return await _check_redis_health()
 
 
-@router.get("/health/celery-worker")
+@router.get("/health/celery-worker", dependencies=[Depends(require_admin)])
 async def celery_worker_health():
     return _check_celery_worker_health()
 
 
-@router.get("/health/celery-beat")
+@router.get("/health/celery-beat", dependencies=[Depends(require_admin)])
 async def celery_beat_health():
     return _check_celery_beat_health()
 
 
-@router.get("/health/mailpit")
+@router.get("/health/mailpit", dependencies=[Depends(require_admin)])
 async def mailpit_health():
     return _check_mailpit_health()
 
 
-@router.get("/health/minio")
+@router.get("/health/minio", dependencies=[Depends(require_admin)])
 async def minio_health():
     return _check_minio_health()
 
 
-@router.get("/health/llm")
+@router.get("/health/llm", dependencies=[Depends(require_admin)])
 async def llm_health():
     return _check_llm_config()
 
@@ -352,7 +353,7 @@ async def websocket_chat(websocket: WebSocket):
         await manager.broadcast_system(f"User {client_id[:8]} left the chat")
 
 
-@router.get("/ws/chat/status")
+@router.get("/ws/chat/status", dependencies=[Depends(require_admin)])
 async def ws_chat_status():
     """Get current WebSocket chat status."""
     return {
@@ -365,7 +366,7 @@ async def ws_chat_status():
 #  CELERY-POWERED ACTIONS: Mail, File Upload, LLM
 # ══════════════════════════════════════════════════════════════════
 
-@router.post("/mail/send")
+@router.post("/mail/send", dependencies=[Depends(require_admin)])
 async def send_test_mail(request: MailRequest):
     """Send a test email via Celery task (through Mailpit SMTP)."""
     from app.tasks import send_mail_task
@@ -377,7 +378,7 @@ async def send_test_mail(request: MailRequest):
     }
 
 
-@router.post("/minio/upload")
+@router.post("/minio/upload", dependencies=[Depends(require_admin)])
 async def upload_test_file(file: UploadFile = File(...)):
     """Upload a file to MinIO via Celery task."""
     content = await file.read()
@@ -394,7 +395,7 @@ async def upload_test_file(file: UploadFile = File(...)):
     }
 
 
-@router.post("/llm/chat")
+@router.post("/llm/chat", dependencies=[Depends(require_admin)])
 async def llm_chat(request: LLMChatRequest):
     """Send a message to the LLM via Celery task."""
     from app.tasks import llm_chat_task
@@ -406,7 +407,7 @@ async def llm_chat(request: LLMChatRequest):
     }
 
 
-@router.get("/task/{task_id}/result")
+@router.get("/task/{task_id}/result", dependencies=[Depends(require_any_role)])
 async def get_task_result(task_id: str):
     """Get the result of a Celery task by ID."""
     from app.celery_app import celery_app

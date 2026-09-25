@@ -659,9 +659,10 @@ version number and `generated_reason` so users understand why it moved.
 | Panel separation `/admin` `/manager` `/employee` | ✅ | Three layouts, RoleRoute, GuestOnlyRoute, 403 page |
 | Public landing page at `/` | ✅ | Hero, problem, how-it-works, feature grid, footer |
 | Guest-only + role-route guards, `/403` | ✅ | GuestOnlyRoute + RoleRoute; mismatch → /403, never silent redirect |
+| Platform-role guard on every route | ✅ | Phase 2 step 6. Workforce, productivity and service-health endpoints are Admin-only |
 | Project-scoped authorisation | 🔲 | Via `project_assignments` |
 | Dynamic roles / menus / permission matrix | ❌ | Tables dropped Phase 1 |
-| User registration, profile update | ✅ | |
+| User registration, profile update | ✅ | Self-registration always creates an `Employee`; only an Admin may create Admin / Manager accounts |
 | `github_username` on user | ✅ | Added Phase 1; Admin + user-settings editable |
 | Token refresh, 2FA, session management | 🔲 | Unchanged backlog |
 
@@ -728,7 +729,7 @@ version number and `generated_reason` so users understand why it moved.
 | Employee directory, departments, designations | ✅ | Move under Workforce |
 | Leaves | 🔄 | Approval moves to Admin — Q10 |
 | Holidays | ✅ | |
-| Attendance **records** | 🔄 | Table retained; rebuilt as an Admin log |
+| Attendance **records** | 🔄 | Table retained; rebuilt as an Admin log. `GET /attendance/all` fixed — it crashed on columns that no longer exist |
 | Work shifts / schedules | 🔄 | Table retained; Admin-managed editor |
 | Employee clock-in/out UI, geo-fencing | ❌ | Removed (routes, geolocation & UI cleared in Phase 0) |
 | Manager's attendance & HR panel | ❌ | Removed outright (cleared in Phase 0) |
@@ -738,11 +739,15 @@ version number and `generated_reason` so users understand why it moved.
 |---------|--------|-------|
 | PostgreSQL, Redis, pgAdmin, Mailpit, MinIO | ✅ | Docker Compose |
 | Celery worker + beat | ✅ | Schedule re-pointed, [`CORE.md`](CORE.md) §8 |
-| Alembic migrations, `./start.sh` | ✅ | |
+| Alembic migrations, `./start.sh` | ✅ | Alembic is the only schema owner; an empty DB reaches head (tested). `start` migrates first |
+| Backend test suite | ✅ | Own `trace_test` DB built by migrations; route-guard audit + role matrix; migration-chain test |
 | WebSocket endpoint | ✅ | Re-point from group chat to notifications/discussion |
 | GitHub API integration | 🔄 | Issue create/assign + repo file commit |
 | CI/CD receiver webhook (HMAC) | 🔲 | |
 | The project's own CI/CD pipeline | 🔲 | Explicitly a task in the build |
+| Single root `.env` | ✅ | The only env file; backend derives DB / Redis / MinIO / SMTP settings from the Compose keys |
+| `APP_ENV` local / production separation | ✅ | Two checks only: `Settings.is_production` and `start.sh`. Production preflight refuses placeholders and seeded passwords |
+| Public hosting via Cloudflare Tunnel | ✅ | `cloudflared` compose service (profile `production`, host networking); routes in README |
 
 ### Frontend foundation
 | Feature | Status | Notes |

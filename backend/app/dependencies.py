@@ -68,3 +68,13 @@ async def get_current_user(
         raise InvalidTokenException()
 
     return user
+
+
+async def get_optional_current_user(
+    authorization: str | None = Header(None, description="Bearer <token>"),
+    db: AsyncSession = Depends(get_db),
+) -> User | None:
+    """Like get_current_user, but returns None when no Authorization header is sent."""
+    if authorization is None:
+        return None
+    return await get_current_user(authorization=authorization, db=db)

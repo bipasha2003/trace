@@ -16,6 +16,7 @@ from datetime import date, time as time_type
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.database import async_session_factory
 from app.models.attendance import TimeZone
 from app.models.employee import Department, Employee, WorkSchedule, Designation
@@ -403,18 +404,24 @@ async def run_seeds() -> None:
             print("\n🌍 Time Zones:")
             await seed_time_zones(db)
 
-            print("\n👥 Users (Admin · Manager · Employees):")
-            await seed_users(db)
-
             print("\n🌿 HRMS Reference Data:")
             await seed_sample_hrms(db)
 
-            print("\n📁 Demo Project:")
-            await seed_demo_project(db)
+            # Demo accounts have published passwords — never on a public deployment
+            demo_data = not get_settings().is_production
+            if demo_data:
+                print("\n👥 Users (Admin · Manager · Employees):")
+                await seed_users(db)
+
+                print("\n📁 Demo Project:")
+                await seed_demo_project(db)
 
             await db.commit()
             print("\n" + "=" * 40)
             print("✅ All seeds completed successfully!\n")
+            if not demo_data:
+                print("Production: demo users and demo project were not seeded.")
+                return
             print("Default credentials:")
             print("  Admin:   admin@trace.com   / Admin@123")
             print("  Manager: manager@trace.com / Manager@123")
@@ -423,6 +430,20 @@ async def run_seeds() -> None:
             await db.rollback()
             print(f"\n❌ Seeding failed: {e}")
             raise
+
+
+async def accounts_with_seed_passwords(db: AsyncSession) -> list[str]:
+    """Emails of seeded accounts that still accept their published seed password."""
+    from app.core.security import verify_password
+
+    weak = []
+    for u_data in SEED_USERS:
+        user = (await db.execute(
+            select(User).where(User.email == u_data["email"], User.deleted_at.is_(None))
+        )).scalar_one_or_none()
+        if user is not None and verify_password(u_data["password"], user.password):
+            weak.append(u_data["email"])
+    return weak
 
 
 if __name__ == "__main__":

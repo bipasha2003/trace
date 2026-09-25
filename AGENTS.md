@@ -126,13 +126,13 @@ POST  /webhooks/cicd                         CI/CD → AI completion resolution
 
 | Module | Prefix | File |
 |--------|--------|------|
-| Auth | `/auth` | `api/v1/auth.py` |
+| Auth | `/auth` | `api/v1/auth.py` — `register` is public but only ever creates an `Employee`; Admin / Manager accounts need an Admin token |
 | Users | `/users` | `api/v1/users.py` |
 | Employees + designations | `/employees` | `api/v1/employees.py` |
 | HRMS (leaves, holidays, bulk upload) | `/hrms` | `api/v1/hrms.py` |
 | Attendance + shifts **records** (Admin) | `/attendance`, `/hrms` | Re-homed under Workforce |
 | Admin all-tables CRUD | `/admin` | `api/v1/admin.py` |
-| Services / health / WS / MinIO / mail / LLM | `/services` | `api/v1/services.py` |
+| Services / health / WS / MinIO / mail / LLM | `/services` | `api/v1/services.py` — Admin-only, except `/services/task/{id}/result`, which any signed-in role may poll |
 
 ### Remove
 
@@ -184,12 +184,32 @@ frontend/src/
   failure; never persist unvalidated output.
 - Authorisation is two-layer: platform role on the route, then project role via
   `project_assignments`. Never rely on the frontend to hide a capability.
+  **Every new route declares a guard** (`require_admin`, `require_roles(...)` or
+  `require_any_role` from `app/core/permissions.py`). The only unauthenticated
+  routes are `/health` and `/auth/{login,refresh,register}`.
 - **Completion authority is enforced in the API layer.** A Member calling
   `PATCH /tasks/{id}/status` with `Completed` gets a 403, always.
   ([`docs/CORE.md`](docs/CORE.md) §7)
-- Schema changes ship as Alembic revisions, one concern per revision.
+- Schema changes ship as Alembic revisions, one concern per revision. **Alembic is
+  the only thing that creates tables** — never `Base.metadata.create_all` in app
+  code; `tests/test_migrations.py` fails if it comes back.
+- Every change ships with tests (`backend/tests/`). New routes get a row in the
+  role matrix in `tests/api/v1/test_route_guards.py`; the static audit there
+  already fails any route without a guard.
 - Celery tasks must be registered — `imports=["app.tasks"]` in `celery_app.py`, or
   discovery silently fails.
+
+- **There is one env file: the repo-root `.env`** (template `.env.example`).
+  Compose, `start.sh`, the backend and the Vite config all read it — never add a
+  `backend/.env` or `frontend/.env`. The backend *derives* `DATABASE_URL`,
+  `REDIS_URL`, `MINIO_*` and `SMTP_PORT` from the Compose keys (`POSTGRES_*`,
+  `DB_PORT`, `MINIO_ROOT_*`, …); add a new key once, never a second copy of a value.
+- **`APP_ENV` (`local` | `production`) is checked in exactly two places:**
+  `Settings.is_production` in `backend/app/config.py` for all Python, and
+  `is_production` in `start.sh` for process orchestration. Never compare
+  `APP_ENV` anywhere else — ask those. The frontend never branches on it.
+- Production refusals are raised from `get_settings()`, not a pydantic validator —
+  a `ValidationError` echoes every settings value, secrets included.
 
 **Frontend**
 - `lucide-react` icons only. No `react-icons`.
@@ -245,9 +265,11 @@ const poll = setInterval(async () => {
 ./start.sh restart
 ./start.sh migrate   # alembic
 ./start.sh status
+./start.sh set-password <email>
 
 cd frontend && npm run dev
 cd backend && source .venv/bin/activate && uvicorn app.main:app --reload --port 8000
+cd backend && .venv/bin/python -m pytest -q   # own DB `trace_test`, migrated by Alembic
 ```
 
 | Service | URL | Credentials |
@@ -282,6 +304,14 @@ return {"text": result.choices[0].message.content}
 # ✅ always — queued, schema-validated
 job = evaluate_project.delay(project_id)
 return {"job_id": job.id}
+```
+
+```python
+# ❌ never — builds tables no revision knows about; a fresh DB can't reach head
+async with engine.begin() as conn:
+    await conn.run_sync(Base.metadata.create_all)
+
+# ✅ always — Alembic owns the schema; start.sh runs `alembic upgrade head`
 ```
 
 ```python

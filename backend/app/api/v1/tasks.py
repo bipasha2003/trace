@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.permissions import require_any_role
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.exceptions import NotFoundException
@@ -22,7 +23,8 @@ from app.schemas.task import (
 )
 from app.services.task_service import TaskService
 
-router = APIRouter(prefix="/tasks", tags=["Tasks"])
+# Legacy router — Phase 3 replaces it with project-scoped tasks and project-role checks
+router = APIRouter(prefix="/tasks", tags=["Tasks"], dependencies=[Depends(require_any_role)])
 
 
 async def _get_employee(user: User, db: AsyncSession) -> Employee:

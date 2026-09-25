@@ -16,13 +16,15 @@ from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.permissions import require_admin
 from app.database import get_db
 from app.models.employee import Employee, WorkSchedule, Department
 from app.models.attendance import Attendance
 from app.models.hrms import Leave, Holiday
 
 logger = logging.getLogger("trace.hrms")
-router = APIRouter(prefix="/hrms", tags=["HRMS"])
+# Workforce records are Admin-owned — PROJECT.md §9.1
+router = APIRouter(prefix="/hrms", tags=["HRMS"], dependencies=[Depends(require_admin)])
 
 
 # ── Schemas ───────────────────────────────────────────────────────

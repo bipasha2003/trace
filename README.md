@@ -29,8 +29,9 @@ Open http://localhost:5173 and sign in with `admin@trace.com` / `Admin@123`.
 | `./start.sh start` | Start everything |
 | `./start.sh stop` | Stop everything |
 | `./start.sh restart` | Restart everything |
-| `./start.sh migrate` | Run database migrations |
-| `./start.sh status` | Show what is running |
+| `./start.sh migrate` | Run database migrations (`start` also runs them first) |
+| `./start.sh status` | Show what is running (and, in production, the public URL's status) |
+| `./start.sh set-password <email>` | Set a user's password |
 
 ### Running the halves separately
 
@@ -38,13 +39,25 @@ Open http://localhost:5173 and sign in with `admin@trace.com` / `Admin@123`.
 # Backend
 cd backend
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt   # settings come from the root .env
+alembic upgrade head          # the app never creates tables itself
 uvicorn app.main:app --reload --port 8000
 
 # Frontend
 cd frontend
 npm install && npm run dev
 ```
+
+### Tests
+
+```bash
+cd backend && .venv/bin/python -m pytest -q
+```
+
+Tests use their own database, `trace_test`, created on first run and built with
+`alembic upgrade head`. They never touch your dev data. The suite also migrates a
+throwaway empty database to prove a fresh checkout can reach the latest schema.
+Point it elsewhere with `TEST_DATABASE_URL`.
 
 ---
 
@@ -70,15 +83,56 @@ Signing out returns you to the public landing page at `/`.
 | Mailpit | http://localhost:8025 | Catches all outgoing email |
 | MinIO | http://localhost:9001 | File storage console |
 
-PostgreSQL runs on port 5433 externally (5432 inside Docker); Redis on 6379.
+PostgreSQL runs on port 5433 externally (5432 inside Docker), so it does not clash
+with a Postgres already installed on the machine. Change `DB_PORT` in `.env`; the
+backend derives its connection from it. Redis is on 6379.
 
 ---
 
 ## Configuration
 
-Copy `.env.example` to `.env` for ports and credentials. Mail, AI provider, GitHub
+Copy `.env.example` to `.env` at the repo root. It is the **only** env file:
+Docker Compose, `start.sh`, the backend and the Vite config all read it. The backend
+derives its database, Redis, MinIO and SMTP connections from the same keys Docker
+Compose uses, so no value is written twice. Mail, AI provider, GitHub
 and CI/CD settings are changed in the app under **Admin → Configuration** — no
 redeploy needed.
+
+---
+
+## Production (public URL through Cloudflare Tunnel)
+
+`APP_ENV` in the root `.env` is `local` or `production`. The same `./start.sh start`
+then does this:
+
+| | `local` | `production` |
+|---|---|---|
+| Frontend | Vite dev server | `vite build`, then `vite preview` on `127.0.0.1:5173` |
+| Backend | uvicorn `--reload` on `0.0.0.0` | uvicorn on `127.0.0.1`, no reload |
+| Tunnel | — | `cloudflared` container (compose profile `production`) |
+| Demo users + demo project | seeded | **not** seeded |
+
+**Production refuses to start** when `CLOUDFLARE_TUNNEL_TOKEN` or `PRODUCTION_URL` is
+empty, `DEBUG` is true, `JWT_SECRET_KEY` is a placeholder, or any account still has
+its published seed password (`admin@trace.com` / `Admin@123` and the others). Fix
+the last one with `./start.sh set-password <email>`.
+
+**Tunnel routes** (Zero Trust → Networks → Tunnels → *tunnel* → Published
+applications). Leave **Path** empty and set **Type** to HTTP:
+
+| Subdomain | URL |
+|---|---|
+| *(blank)* | `localhost:5173` |
+| `www` | `localhost:5173` |
+
+- The URLs use `localhost`, not container names. The app runs on the host, and
+  `cloudflared` uses host networking.
+- `/api` is served through the same origin, so the API needs no route.
+- Afterwards, check **DNS → Records** shows both names. The bare-domain record is
+  sometimes not created; add it by hand as CNAME `@` →
+  `<tunnel-id>.cfargotunnel.com`, **Proxied**.
+- Do not route pgAdmin, the MinIO console or Mailpit unless Cloudflare Access
+  sits in front of them first.
 
 ---
 
