@@ -3,8 +3,8 @@ TRACE - Phase 3: projects, team, task groups and tasks — the manual path, no A
 
 DEVELOPMENT.md Phase 3 "Done when": a Manager creates a project and assigns a PM,
 and that PM creates tasks that appear as GitHub issues. Plus the rules around it:
-project-scoped authorisation (PROJECT.md §4, §16) and completion authority
-(CORE.md §7).
+project-scoped authorisation (PROJECT.md §4, §16) and status authority
+(CORE.md §7): the assignee completes their own task.
 """
 
 import io
@@ -86,7 +86,7 @@ async def test_manager_to_pm_to_github_issue(client: AsyncClient, world: World, 
     issue = fake_github.issues[("acme/storefront", 1)]
     assert issue["title"] == "Build the cart"
     assert issue["assignees"] == ["dan-gh"]
-    assert "Cart with coupons" in issue["body"] and "commit messages" in issue["body"]
+    assert "Cart with coupons" in issue["body"] and "Managed by TRACE" in issue["body"]
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -566,7 +566,7 @@ async def test_delete_closes_the_issue_as_not_planned(client: AsyncClient, world
 
 
 # ══════════════════════════════════════════════════════════════════
-#  Completion authority — CORE.md §7
+#  Status authority — CORE.md §7
 # ══════════════════════════════════════════════════════════════════
 
 @pytest.fixture
@@ -574,23 +574,31 @@ async def assigned_task(client: AsyncClient, world: World, fake_github) -> dict:
     return (await _task(client, world, await _group(client, world), assignee=world.dev_id))["task"]
 
 
-async def test_member_moves_own_task_but_never_completes_it(client: AsyncClient, world: World, assigned_task):
+async def test_assignee_completes_own_task(client: AsyncClient, world: World, assigned_task,
+                                            fake_github: FakeGitHub):
     url = f"{API}/tasks/{assigned_task['id']}/status"
-    assert (await client.patch(url, headers=world.dev, json={"status": "In Progress"})).status_code == 200
+    for status in ("In Progress", "In Review"):
+        assert (await client.patch(url, headers=world.dev, json={"status": status})).status_code == 200
     resp = await client.patch(url, headers=world.dev, json={"status": "Completed"})
-    assert resp.status_code == 403
-    assert resp.json()["detail"] == "Completion is confirmed by CI/CD or the Project Manager"
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["completed_by"] == "Assignee" and resp.json()["completed_at"]
+    assert fake_github.issues[("acme/storefront", 1)]["state"] == "closed"
+
+    reopened = await client.patch(url, headers=world.dev, json={"status": "In Progress"})
+    assert reopened.status_code == 200 and reopened.json()["completed_by"] is None
+    assert fake_github.issues[("acme/storefront", 1)]["state"] == "open"
 
 
-@pytest.mark.parametrize("status", ["In Review", "Cancelled", "Overdue"])
-async def test_member_cannot_set_other_statuses(client: AsyncClient, world: World, assigned_task, status):
+@pytest.mark.parametrize("status", ["Cancelled", "Overdue"])
+async def test_assignee_cannot_cancel_or_set_overdue(client: AsyncClient, world: World, assigned_task, status):
     resp = await client.patch(f"{API}/tasks/{assigned_task['id']}/status", headers=world.dev, json={"status": status})
     assert resp.status_code == 403
 
 
-async def test_member_cannot_touch_someone_elses_task(client: AsyncClient, world: World, assigned_task):
+@pytest.mark.parametrize("status", ["In Progress", "Completed"])
+async def test_member_cannot_touch_someone_elses_task(client: AsyncClient, world: World, assigned_task, status):
     other = (await _task(client, world, assigned_task["task_group_id"], assignee=world.newbie_id))["task"]
-    resp = await client.patch(f"{API}/tasks/{other['id']}/status", headers=world.dev, json={"status": "In Progress"})
+    resp = await client.patch(f"{API}/tasks/{other['id']}/status", headers=world.dev, json={"status": status})
     assert resp.status_code == 403
 
 
@@ -633,8 +641,7 @@ async def test_pm_completes_closes_issue_and_rolls_up(client: AsyncClient, world
 
 async def test_allowed_statuses_mirror_the_rule(client: AsyncClient, world: World, assigned_task):
     as_member = (await client.get(f"{API}/tasks/{assigned_task['id']}", headers=world.dev)).json()
-    assert "Completed" not in as_member["allowed_statuses"]
-    assert set(as_member["allowed_statuses"]) == {"In Progress", "Blocked"}
+    assert set(as_member["allowed_statuses"]) == {"In Progress", "In Review", "Blocked", "Completed"}
     assert as_member["can_edit"] is False
     as_pm = (await client.get(f"{API}/tasks/{assigned_task['id']}", headers=world.pm)).json()
     assert "Completed" in as_pm["allowed_statuses"] and "Overdue" not in as_pm["allowed_statuses"]

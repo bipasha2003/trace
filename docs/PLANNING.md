@@ -52,6 +52,7 @@ it was supposed to be **AI-driven project delivery**. The re-spec:
   Gantt's modules; the infinite tree and the Team Lead role were retired.
 - **Completion became machine-decided.** CI/CD triggers an AI resolution of which
   tasks a push completed. A Member can never mark their own work done.
+  *(Reversed 2026-09-26: completion is manual, by the assignee — §2.)*
 - **AI moved to the centre.** Evaluate Project, task-group derivation, Gantt
   generation and regeneration, per-task progress documents, weekly roll-ups, and
   ranked suggestions for Project Managers and assignees — all of [`CORE.md`](CORE.md).
@@ -76,7 +77,7 @@ consolidated into six: `AGENTS.md` and `README.md` at the root, and `PROJECT.md`
 | 2026-09-21 | `project_initial_doc` is write-once | Gives `project_doc` something to measure scope drift against |
 | 2026-09-21 | Gantt regenerated as a new version, never patched | Auditable; `generated_reason` explains every movement |
 | 2026-09-21 | AI suggests people, never assigns them | Keeps a human accountable for who does what |
-| 2026-09-21 | Completion authority: AI/CI-CD or Project Manager only | Self-declared completion was the thing worth designing out |
+| 2026-09-21 | Completion authority: AI/CI-CD or Project Manager only | Self-declared completion was the thing worth designing out. *Superseded 2026-09-26, below* |
 | 2026-09-21 | Dynamic roles, menus and the permission matrix retired | Directly contradicted three hardcoded roles with fixed panels |
 | 2026-09-21 | Runtime config moved to `system_settings` with `.env` fallback | Admin changes mail/AI credentials without a redeploy |
 | 2026-09-21 | **Workforce record set retained in full, Admin-owned** | The HR *interfaces* were the problem, not the data. Planning needs availability |
@@ -102,20 +103,30 @@ consolidated into six: `AGENTS.md` and `README.md` at the root, and `PROJECT.md`
 | 2026-09-26 | GitHub Configuration pulled forward from Phase 8 into a new **Phase 3a** | Task creation is issue creation, so without a token no task can exist. Waiting for Phase 8 would leave the core flow unusable through Phases 4–7 |
 | 2026-09-26 | Task status drives the issue state: complete / cancel / delete close it, reopening reopens it | Not in the spec. Without it, the task list and the issue list drift apart the first time a task is completed — the exact drift CORE.md §4 forbids |
 | 2026-09-26 | `PATCH /tasks/{id}` edits details only; status has its own endpoint | The legacy generic update accepted `status`, which bypassed completion authority. One door for status means one place the rule is enforced |
+| 2026-09-26 | **CI/CD-driven completion removed** (user decision): the task's assignee sets its status, `Completed` included; the Project Manager may set any status. Phase 6 dropped, `cicd_events` dropped | The CI/CD webhook + AI resolver was the most machinery for the least certainty — every project would first need its own pipeline, and a low-confidence match still ended with a human. For an educational project, the person doing the work saying it is done is enough; the issue closes and the Gantt re-evaluates the same way. `completed_by` stays, now `Assignee` / `Project Manager` |
+| 2026-09-26 | The assignee may set `In Review` and `Completed`, but **not** `Cancelled` | "Complete or whatever" could mean every status. Cancelling was kept with the Project Manager: dropping a task changes the project's scope, which is the PM's call, not a report of work done |
+| 2026-09-26 | Phase numbers kept after removing Phase 6 | Renumbering 7–9 would silently break every "Phase 8" reference in docs and UI (the Configuration badges); a visible gap is cheaper |
+| 2026-09-26 | Tree graph on **`@xyflow/react`**, with its `base.css` only | Hand-rolling SVG pan/zoom was the dependency-free option; not taken — pinch/scroll zoom, fit-to-view and hit-testing are most of the work and React Flow is the maintained standard. Its full `style.css` was not used: nodes, edges, controls and background are styled with theme tokens, so both themes follow `index.css` |
+| 2026-09-26 | Gantt **hand-built** (divs + one SVG), no library | Gantt libraries (frappe-gantt, gantt-task-react, …) ship their own CSS and are built around drag-editing, which TRACE forbids; `recharts` has no timeline. A read-only chart with bars, markers and elbow arrows from a fixed schema is ~250 lines of JSX |
+| 2026-09-26 | `chart_data` schema defined in Phase 4 (`CORE.md` §5.1), plus a deterministic builder | The phase text said only "driven by `chart_data`" and Phase 5 will generate it. Defining the shape now, as a Pydantic model every writer must pass, stops the renderer and the AI from drifting apart. The builder does the arithmetic (dates, roll-up) so the AI only has to supply dates, durations and dependencies |
+| 2026-09-26 | The tree is a **live** read; the Gantt is a stored **snapshot** | Both could be live. The spec makes the Gantt versioned with a reason per version, which only means something if a version shows what was true when it was made. The tree has no such history, so it reads current data |
+| 2026-09-26 | `GET /projects/{id}/gantt` returns `null`, not 404, before the first version | A project without a chart yet is the normal state until it is evaluated; a 404 would be indistinguishable from a missing project. `?version=N` for a version that does not exist is still a 404 |
 
 ---
 
 ## 3. Deferred — long horizon
 
 Built or designed, deliberately parked. None of this enters the build before
-Phase 6 ships. Short-term deferrals live in [`DEVELOPMENT.md`](DEVELOPMENT.md) instead.
+Phase 7 ships. Short-term deferrals live in [`DEVELOPMENT.md`](DEVELOPMENT.md) instead.
 
 ### 3.1 Explainable-AI Dispute Queue *(built, removed in Phase 0)*
 A "contest verdict" flow over AI decisions: structured
 `{verdict, confidence, reasoning, evidence}` output, an appeal routed to the
 Project Manager, and a human override stored alongside the AI verdict.
-**Why it returns:** once CI/CD completes tasks automatically, a disputed
-completion is a real scenario. Revisit after Phase 6.
+**Why it stays parked:** it was to return for disputed *automatic* completions,
+and automatic completion was removed (2026-09-26). The AI now only suggests, and a
+human already accepts or ignores each suggestion. Revisit only if the AI starts
+deciding things.
 *Was:* `EvaluationDispute` model, `/tasks/dispute`, `/tasks/disputes`.
 
 ### 3.2 Auto-Escalation Engine *(built, removed in Phase 0)*
@@ -134,9 +145,9 @@ different implementation.
 ### 3.4 Scope-Drift Detection *(designed, never built)*
 Store each commit's LLM-extracted intent in `task_commit_logs`; a periodic job
 flags when accumulated work drifts from the task's original scope.
-**Why it returns:** the CI/CD resolver already extracts commit intent, so most of
-the input exists after Phase 6. `project_initial_doc` being immutable gives it a
-project-level baseline too.
+**Why it may return:** `project_initial_doc` being immutable gives it a
+project-level baseline. Its commit input was to come from the CI/CD resolver, which
+was removed (2026-09-26), so it would need its own reader of the repo's commits.
 
 ### 3.5 Future ideas — not committed
 
@@ -145,11 +156,10 @@ project-level baseline too.
 | Chat-ops in task discussion (`@trace create task …`) | Natural-language task creation | After Phase 7 |
 | Reusable project templates | Instantiate a standard task-group structure | After Phase 3 |
 | Cross-project workload view | Successor to §3.3 | After Phase 5 |
-| Contribution heatmap | Commits + completions per person over time | After Phase 6 |
+| Contribution heatmap | Commits + completions per person over time | After Phase 5 |
 | Critical-path overlay on the Gantt | Projected completion dates from dependencies | After Phase 4 |
 | Whiteboard / voice → project docs | Multimodal intake into `project_source_files` | After Phase 5 |
 | AI fairness audit | Check suggestion scores for systematic bias | After Phase 5 |
-| Multi-provider CI/CD (GitLab, Jenkins) | Beyond GitHub Actions | After Phase 6 |
 | GitHub App instead of a token | Short-lived, per-installation tokens not tied to a person; finer permissions | After Phase 3a |
 
 **Rule for everything in §3:** it does not enter the build until the phase it
@@ -169,7 +179,7 @@ not re-proposed without new information.
 | Deleting the workforce tables outright | Retain them, Admin-owned, with bulk upload | Destroys data that planning needs; the interfaces were the problem |
 | Keeping the role↔menu permission matrix | Hardcoded roles, code-defined per-panel menus | Three fixed panels and a configurable menu system solve the same problem twice, and disagree when they drift |
 | A `*_doc_versions` table | Repo files, `git log` as history | Re-implements version control inside the database |
-| Letting Members mark their own tasks complete | AI via CI/CD, or the Project Manager | Self-declared completion is precisely what this system exists to replace |
+| CI/CD-driven, AI-resolved task completion (webhook, `cicd_events`, resolver job) | The assignee marks the task complete | Removed by the user 2026-09-26 after being the plan since the re-spec: too much machinery for an educational project (a pipeline per project, a confidence threshold, a human fallback anyway). Do not re-propose without a user request |
 | Patching the Gantt chart in place | Regenerate as a new version | No audit trail, and no way to answer "why did this date move?" |
 | AI auto-assigning people | AI suggests, a human accepts | Accountability for who does what must stay with a person |
 | A separate "add members to project" step | Assignment to a task grants membership | An extra gate with no decision behind it (Q8 — revisit if roster control is wanted) |
@@ -200,6 +210,8 @@ short — a decision, and the reason it was not the obvious choice.
 | 2026-09-26 | Phase 3 execution | Built the manual path: projects, source files (MinIO + pdf/docx/md/txt extraction), team, task groups, tasks as GitHub issues, completion authority. Found the legacy `/tasks` router was a live hole on the public site — any signed-in user could complete any task through `PATCH /tasks/{id}` — and most of it referenced dropped columns; replaced wholesale. Non-obvious: (a) creating a task flushes before calling GitHub, so the service rolls back explicitly on a GitHub error rather than trusting `get_db` to — the test harness caught this because its session did not roll back; the harness now mirrors `get_db`. (b) New rows need `refresh()` before reading `created_at` — it is a server default and an async lazy load raises `MissingGreenlet`. (c) The UI never decides what a user may do: task responses carry `can_edit` and `allowed_statuses`, derived from the same `ProjectAccess.may_set_status` the API enforces. (d) `scoring_service.py` still reads the dropped `Task.assigned_to` — left for Phase 5 step 3, which re-bases scoring. Then, mid-phase, the GitHub owner model was decided (§2) and scheduled as Phase 3a |
 | 2026-09-26 | Phase 3a execution | Built the GitHub owner model: `/admin/settings/github` (+ `/test`), Fernet encryption of secret settings, Admin → Configuration → GitHub, repo creation on project create, collaborator invite / revoke. Non-obvious: (a) the generic Control Panel CRUD served `system_settings` — it would have returned the token and written it unencrypted — so the table left `MODEL_REGISTRY` (§2). (b) A malformed `SETTINGS_ENCRYPTION_KEY` raised a raw `ValueError` (500); it is now a 503 naming the key, and the production preflight rejects it. (c) Adding the key to the preflight means production **refuses to start** without it, and production shares this machine's `.env` — so a generated key was written into the root `.env` in the same change. (d) GitHub refuses a pending invitee as issue assignee with a 422; the service retries unassigned and warns, and the fake GitHub now enforces the same rule, which is what the tests pin. (e) `DELETE /projects/{id}/assignments/{uid}` now answers 200 with `{project_role, warnings}` instead of 204 — the UI needs the revocation warnings, and the old toast guessed "stays as Member" from *open* tasks while the server counts *any* task. (f) The suite needs both the `db` **and** `redis` Compose services — without Redis, the three job-poll guard tests fail |
 | 2026-09-26 | Phase 0–3a pendings closed | First contact with real GitHub (org `trace-bipasha-bagchi`): the token authenticated, but the organization **refused fine-grained tokens valid for more than 366 days** (403) — something no fake models; README and CORE now say so. The user recreated the org as `trace-organization`. Built repo archiving on project delete. Removed Phase 0 leftovers the sweep had missed: `core/geolocation.py` and `services/attendance_service.py` (clock-in/out only, imported but unused), their exceptions and schemas, and the unused `layouts/DashboardLayout.jsx` / `Header.jsx`. The demo seed uses `GITHUB_OWNER/trace-platform` (created by hand). Member removal and resend-invitation rejected (§4). Finally an opt-in live test (`tests/test_github_live.py`, `TRACE_LIVE_GITHUB=1`) ran TRACE's real code path end to end against the new org and passed first time — the fake's model of repo creation, the clash 422, commits, issue assignment and archiving holds |
+| 2026-09-26 | CI/CD completion removed | User decision. Built pieces undone: `may_set_status` now lets the assignee set In Review / Completed (`completed_by='Assignee'`), `cicd_events` dropped by revision `c4e1d2a7f9b3` (the table was empty — checked before dropping), the CI/CD text left the issue body, task page, landing page and Configuration. Non-obvious: `completed_by` is decided by *who the caller is to the task*, not their project role — a PM completing their own task is recorded as `Assignee`. Phase 6 kept as a visible gap rather than renumbering |
+| 2026-09-26 | Phase 4 execution | Tree and Gantt built. Found: (a) `task_groups` has no dependency column, and the AI's `depends_on` (CORE §3 step 5) had nowhere to be stored — the builder takes dependency pairs as an argument and Phase 5 decides whether they need a column; (b) the demo seed's task groups had no planned dates, so the seed now sets them and writes Gantt v1 with two dependencies — the local DB's project 1 got the same through a one-off script; (c) project routes can't use the data-free role matrix, so `test_visualisation.py` carries its own project-scoped one. Not browser-tested (user decision) — the build passes and the API is covered |
 
 ---
 
@@ -241,7 +253,7 @@ becomes "depth-1 child" rather than a `task_groups` table — a substantial chan
 retained and **Admin-managed** under Workforce, with CRUD and bulk upload on every
 tab. Removed is the *interface*: the Manager HR panel, employee clock-in/out
 capture, and geo-fence enforcement. Recorded coordinates remain as plain data.
-Performance scoring is re-based on task and CI/CD signals; attendance is recorded
+Performance scoring is re-based on task signals; attendance is recorded
 but is not a scoring input.
 *Documented in [`PROJECT.md`](PROJECT.md) §5, §9.1, §14, §18.*
 
@@ -260,7 +272,7 @@ toggle, in which case `RoleMenuPermission` stays.
 | Feature | Disposition |
 |---------|-------------|
 | AI Subtask Decomposition | **Reused** as Stage 1 task-group/task generation |
-| LLM Commit Verification | **Reused** as the CI/CD completion resolver |
+| LLM Commit Verification | ~~Reused as the CI/CD completion resolver~~ — **dropped** with CI/CD completion (2026-09-26) |
 | Skill-aware assignment | **Promoted** to required (PM and assignee suggestion) |
 | Task Health Score | **Kept** as a progress-reporting input |
 | Dispute Queue · Auto-Escalation · Overallocation · Scope-Drift | **Deferred** to §3 |
@@ -283,9 +295,8 @@ single company GitHub owner configured by the Admin ([`CORE.md`](CORE.md) §4.1)
 The Manager no longer supplies a repo. Documents are committed to the default
 branch. Per-task or per-feature branching is still **deferred**.
 *Was assumed:* the Manager supplies an existing repo — rejected (§4).
-**Open for later discussion:** a branch per task named from the issue id (the
-resolver would key on the branch rather than the commit message); monorepo projects
-sharing one repository; PR-merge rather than successful deploy as the completion signal.
+**Open for later discussion:** a branch per task named from the issue id; monorepo
+projects sharing one repository.
 
 ### Q7 — What goes in Admin → Reports? *(blocking for that screen only)*
 Noted as "to be discussed". Three candidates were named:
@@ -293,7 +304,7 @@ Noted as "to be discussed". Three candidates were named:
 | Report | Audience | Open question |
 |--------|----------|---------------|
 | Project completion report | Manager, Admin | Overlaps `project_report_doc` — the same artefact surfaced, or a separate dashboard? |
-| Employee performance report | Admin | Which metrics? Task and CI/CD signals feed scoring today; attendance is recorded but deliberately excluded — should the report use it? |
+| Employee performance report | Admin | Which metrics? Task signals feed scoring today; attendance is recorded but deliberately excluded — should the report use it? |
 | Progress report by time interval | Manager, Admin | An interval picker over `gantt_charts` history and task status changes |
 
 **Assumption:** `/admin/reports` ships as a **placeholder**. Nothing else depends on it.

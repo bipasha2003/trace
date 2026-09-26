@@ -28,3 +28,18 @@ export function isOverdue(task) {
   if (!task?.due_date || ['Completed', 'Cancelled'].includes(task.status)) return false
   return task.status === 'Overdue' || new Date(task.due_date) < new Date(new Date().toDateString())
 }
+
+/** Status → a solid token colour, for graph nodes and Gantt markers. Overdue reads as Blocked. */
+export const STATUS_TONE = {
+  Pending: 'bg-muted-foreground',
+  'In Progress': 'bg-chart-2',
+  'In Review': 'bg-chart-4',
+  Completed: 'bg-primary',
+  Blocked: 'bg-destructive',
+  Overdue: 'bg-destructive',
+  Cancelled: 'bg-border',
+}
+
+export function statusTone(status, overdue = false) {
+  return overdue ? STATUS_TONE.Overdue : STATUS_TONE[status] || STATUS_TONE.Pending
+}

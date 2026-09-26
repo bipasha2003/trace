@@ -40,7 +40,6 @@ from app.models.project import (
     GanttChart,
     TaskDiscussion,
     Notification,
-    CicdEvent,
 )
 
 router = APIRouter()
@@ -77,7 +76,6 @@ MODEL_REGISTRY: Dict[str, Dict[str, Any]] = {
     "gantt_charts": {"model": GanttChart, "display_name": "Gantt Charts", "category": "Tasks & Projects"},
     "task_discussions": {"model": TaskDiscussion, "display_name": "Task Discussions", "category": "Tasks & Projects"},
     "notifications": {"model": Notification, "display_name": "Notifications", "category": "Tasks & Projects"},
-    "cicd_events": {"model": CicdEvent, "display_name": "CI/CD Events", "category": "Tasks & Projects"},
     # AI & System
     "productivity_scores": {"model": ProductivityScore, "display_name": "Productivity Scores", "category": "AI & System"},
     # system_settings is deliberately absent: it holds encrypted secrets, and the generic

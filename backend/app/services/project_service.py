@@ -256,8 +256,7 @@ def issue_body(task: Task, project: Project) -> str:
     parts.append(
         "---\n"
         f"Managed by TRACE · project **{project.name}**.\n\n"
-        f"Reference this issue in your commit messages (`#<issue number>`): a successful "
-        f"CI/CD run then lets TRACE mark the task complete. Members cannot close tasks by hand."
+        "Update the task's status in TRACE — marking it Completed there closes this issue."
     )
     return "\n\n".join(parts)
 
@@ -438,7 +437,7 @@ async def set_status(db: AsyncSession, access: ProjectAccess, task: Task, new_st
 
     task.status = new_status
     if new_status == "Completed":
-        task.completed_by = "Project Manager"
+        task.completed_by = "Assignee" if access.is_assignee(task) else "Project Manager"
         task.completed_at = datetime.now(timezone.utc)
     else:
         task.completed_by = None

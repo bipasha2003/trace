@@ -4,7 +4,8 @@ AI-driven project and task management.
 
 A manager uploads a project's requirement documents. The AI writes the project
 documentation, breaks it into task groups, builds a Gantt chart, and suggests who
-should run it. Tasks are GitHub issues, and CI/CD marks them complete.
+should run it. Tasks are GitHub issues; whoever is assigned a task marks it complete,
+which closes the issue.
 
 ---
 
@@ -94,8 +95,8 @@ backend derives its connection from it. Redis is on 6379.
 Copy `.env.example` to `.env` at the repo root. It is the **only** env file:
 Docker Compose, `start.sh`, the backend and the Vite config all read it. The backend
 derives its database, Redis, MinIO and SMTP connections from the same keys Docker
-Compose uses, so no value is written twice. Mail, AI provider, GitHub
-and CI/CD settings are changed in the app under **Admin → Configuration** — no
+Compose uses, so no value is written twice. Mail, AI provider and GitHub
+settings are changed in the app under **Admin → Configuration** — no
 redeploy needed.
 
 ### GitHub

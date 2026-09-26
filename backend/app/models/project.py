@@ -2,7 +2,7 @@
 TRACE - Project Models
 Tables: projects, project_source_files, project_assignments,
         task_groups, gantt_charts, task_discussions,
-        notifications, system_settings, cicd_events
+        notifications, system_settings
 """
 
 from datetime import date, datetime
@@ -75,9 +75,6 @@ class Project(BaseModelMixin, Base):
     )
     gantt_charts: Mapped[list["GanttChart"]] = relationship(
         "GanttChart", back_populates="project", cascade="all, delete-orphan"
-    )
-    cicd_events: Mapped[list["CicdEvent"]] = relationship(
-        "CicdEvent", back_populates="project", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:
@@ -290,8 +287,8 @@ class Notification(BaseModelMixin, Base):
 class SystemSetting(BaseModelMixin, Base):
     """
     system_settings table — runtime configuration, backing Admin → Configuration.
-    category: mail | ai | github | cicd
-    Secrets are masked in API responses; resolution order: DB value, then .env fallback.
+    category: mail | ai | github
+    Secrets are encrypted and never returned; resolution order: DB value, then .env fallback.
     """
 
     __tablename__ = "system_settings"
@@ -307,37 +304,6 @@ class SystemSetting(BaseModelMixin, Base):
 
     def __repr__(self) -> str:
         return f"<SystemSetting(category={self.category}, key={self.key})>"
-
-
-class CicdEvent(BaseModelMixin, Base):
-    """
-    cicd_events table — audit trail for the CI/CD webhook that completes tasks.
-    pipeline_status: success | failure
-    resolved_task_ids: JSONB — tasks the AI decided this push completes (may be several)
-    """
-
-    __tablename__ = "cicd_events"
-
-    project_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("projects.id"), nullable=False
-    )
-    provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    commit_sha: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    commit_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    pipeline_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
-    payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    resolved_task_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
-    ai_reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
-    processed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-
-    # ── Relationships ─────────────────────────────────────────────
-    project: Mapped[Project] = relationship("Project", back_populates="cicd_events")
-
-    def __repr__(self) -> str:
-        return f"<CicdEvent(id={self.id}, project={self.project_id}, status={self.pipeline_status})>"
 
 
 # Forward references

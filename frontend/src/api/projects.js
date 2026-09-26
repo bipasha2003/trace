@@ -1,6 +1,6 @@
 /**
  * TRACE — Projects API
- * Projects, source files, team, task groups and project-scoped tasks.
+ * Projects, source files, team, task groups, project-scoped tasks, tree and Gantt.
  */
 
 import api from './client'
@@ -36,6 +36,11 @@ export const projectsApi = {
 
   tasks: (id, params = {}) => api.get(`/projects/${id}/tasks`, { params }),
   createTask: (id, data) => api.post(`/projects/${id}/tasks`, data),
+
+  tree: (id) => api.get(`/projects/${id}/tree`),
+  /** latest version, or `version`; resolves to null data before the first one */
+  gantt: (id, version) => api.get(`/projects/${id}/gantt`, { params: version ? { version } : {} }),
+  ganttVersions: (id) => api.get(`/projects/${id}/gantt/versions`),
 }
 
 export default projectsApi

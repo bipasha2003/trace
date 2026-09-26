@@ -2,7 +2,7 @@
 TRACE - Runtime settings resolution
 
 Admin → Configuration writes `system_settings` rows; a value there wins over the
-`.env` fallback (PROJECT.md §11.8). Every consumer of mail / AI / GitHub / CI-CD
+`.env` fallback (PROJECT.md §11.8). Every consumer of mail / AI / GitHub
 credentials resolves them through `resolve_setting`, never straight from Settings.
 
 Rows with `is_secret` are Fernet-encrypted at rest with SETTINGS_ENCRYPTION_KEY

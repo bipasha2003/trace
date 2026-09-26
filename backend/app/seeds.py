@@ -350,22 +350,27 @@ async def seed_demo_project(db: AsyncSession) -> None:
 
     # Create task groups
     groups = [
-        ("Backend Foundation", "Database schema, API routes, authentication", 1),
-        ("Frontend Shell", "Panel layouts, routing, landing page", 2),
-        ("AI Pipeline", "Evaluate project, Gantt generation, task docs", 3),
+        ("Backend Foundation", "Database schema, API routes, authentication", 1, date(2026, 9, 1), date(2026, 10, 15)),
+        ("Frontend Shell", "Panel layouts, routing, landing page", 2, date(2026, 9, 15), date(2026, 10, 31)),
+        ("AI Pipeline", "Evaluate project, Gantt generation, task docs", 3, date(2026, 11, 1), date(2026, 12, 20)),
     ]
 
-    for name, desc, seq in groups:
+    group_ids = []
+    for name, desc, seq, start, end in groups:
         group = TaskGroup(
             project_id=project.id,
             name=name,
             description=desc,
             sequence=seq,
+            planned_start_date=start,
+            planned_end_date=end,
+            estimated_duration_days=(end - start).days + 1,
             status="Pending",
             created_by="Human",
         )
         db.add(group)
         await db.flush()
+        group_ids.append(group.id)
 
         # One placeholder task per group
         task = Task(
@@ -379,6 +384,11 @@ async def seed_demo_project(db: AsyncSession) -> None:
         db.add(task)
 
     await db.flush()
+    # A hand-written Gantt v1 until Phase 5 generates them (DEVELOPMENT.md Phase 4):
+    # the AI pipeline depends on both the backend and the frontend groups.
+    from app.services import gantt_service
+    backend, frontend, ai = group_ids
+    await gantt_service.snapshot(db, project, "initial", dependencies=[(backend, ai), (frontend, ai)])
     print(f"  ✅ Demo project: '{project.name}' (id={project.id})")
 
 

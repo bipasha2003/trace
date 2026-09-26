@@ -26,6 +26,8 @@ from app.schemas.project import (
     ProjectDetail, ProjectSummary, ProjectUpdate, RemovalResponse, SourceFileUploadResponse, TaskCreate,
     TaskGroupCreate, TaskGroupResponse, TaskGroupUpdate, TaskMutationResponse, TaskResponse,
 )
+from app.schemas.gantt import GanttResponse, GanttVersionBrief, ProjectTree
+from app.services import gantt_service
 from app.services import project_service as svc
 from app.services.extraction import (
     MAX_SOURCE_FILE_BYTES, UnsupportedFile, extension_of, extract_text,
@@ -408,3 +410,39 @@ async def create_project_task(
     access.require_project_manager()
     task, warnings = await svc.create_task(db, access, data, require_github(github))
     return {"task": svc.task_dict(task, access), "warnings": warnings}
+
+
+# ══════════════════════════════════════════════════════════════════
+#  VISUALISATION (Phase 4) — read-only for everyone who sees the project
+# ══════════════════════════════════════════════════════════════════
+
+@router.get("/{project_id}/tree", response_model=ProjectTree,
+            summary="Project → task groups → tasks → assignees, for the graph view")
+async def get_project_tree(access: ProjectAccess = Depends(project_access), db: AsyncSession = Depends(get_db)):
+    return await gantt_service.project_tree(db, access.project)
+
+
+@router.get("/{project_id}/gantt", response_model=GanttResponse | None,
+            summary="The latest Gantt version (or ?version=N); null before the first one")
+async def get_gantt(
+    version: int | None = None,
+    access: ProjectAccess = Depends(project_access),
+    db: AsyncSession = Depends(get_db),
+):
+    rows = await gantt_service.versions(db, access.project.id)
+    if not rows:
+        if version is not None:
+            raise NotFoundException("Gantt version")
+        return None
+    row = rows[0] if version is None else next((r for r in rows if r.version == version), None)
+    if row is None:
+        raise NotFoundException("Gantt version")
+    return {"version": row.version, "generated_reason": row.generated_reason, "generated_at": row.generated_at,
+            "chart_data": row.chart_data, "latest_version": rows[0].version}
+
+
+@router.get("/{project_id}/gantt/versions", response_model=list[GanttVersionBrief],
+            summary="Gantt version history, newest first")
+async def list_gantt_versions(access: ProjectAccess = Depends(project_access), db: AsyncSession = Depends(get_db)):
+    return [{"version": r.version, "generated_reason": r.generated_reason, "generated_at": r.generated_at}
+            for r in await gantt_service.versions(db, access.project.id)]

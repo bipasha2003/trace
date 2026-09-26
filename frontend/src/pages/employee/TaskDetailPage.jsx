@@ -1,13 +1,13 @@
 /**
  * TRACE — Employee: task detail
- * Description, linked GitHub issue, progress doc, status, the push-with-issue-id
- * convention (CORE.md §7). The status buttons come from the server's
- * `allowed_statuses`, so a Member is never offered Completed. PROJECT.md §20.
+ * Description, linked GitHub issue, progress doc, status. The assignee updates the
+ * status themselves, completion included (CORE.md §7); the buttons come from the
+ * server's `allowed_statuses`, never re-derived here. PROJECT.md §20.
  */
 
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, CheckCircle2, ExternalLink, FileText, GitCommitHorizontal, Info, Loader2 } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, ExternalLink, FileText, GitCommitHorizontal, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -99,13 +99,13 @@ export default function TaskDetailPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base"><GitCommitHorizontal className="size-4" /> Reporting your work</CardTitle>
-              <CardDescription>Completion is confirmed by CI/CD, not by hand.</CardDescription>
+              <CardTitle className="flex items-center gap-2 text-base"><GitCommitHorizontal className="size-4" /> GitHub issue</CardTitle>
+              <CardDescription>This task is an issue in the project’s repository.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
               <p>
-                Push commits that reference {issueRef ? <strong>{issueRef}</strong> : 'the issue number'} in the message.
-                When the project’s CI/CD pipeline succeeds, TRACE works out which task the push completes.
+                Reference {issueRef ? <strong>{issueRef}</strong> : 'the issue number'} in your commit messages so GitHub
+                links the work to it. When you are done, mark the task complete here — that closes the issue.
               </p>
               {issueRef && (
                 <pre className="rounded-md bg-muted px-3 py-2 text-xs">git commit -m "Add coupon field to cart ({issueRef})"</pre>
@@ -156,12 +156,6 @@ export default function TaskDetailPage() {
               ) : (
                 <p className="text-muted-foreground">You can view this task but not change its status.</p>
               )}
-              {!isPM && (
-                <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
-                  <Info className="mt-0.5 size-3.5 shrink-0" />
-                  Only CI/CD or the Project Manager can mark a task complete.
-                </p>
-              )}
             </CardContent>
           </Card>
 
@@ -193,8 +187,8 @@ export default function TaskDetailPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Mark this task complete?</AlertDialogTitle>
             <AlertDialogDescription>
-              This records you, the Project Manager, as the one who completed it and closes GitHub issue {issueRef}.
-              Normally CI/CD confirms completion — do this for work CI/CD cannot verify.
+              This records the task as completed and closes GitHub issue {issueRef}. It can be reopened
+              later by setting another status.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

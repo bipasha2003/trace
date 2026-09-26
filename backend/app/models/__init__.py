@@ -4,7 +4,7 @@ Imports all models so Alembic and the app can discover them.
 
 Phase-1 completed:
   - New: projects, project_source_files, project_assignments, task_groups,
-    gantt_charts, task_discussions, notifications, system_settings, cicd_events
+    gantt_charts, task_discussions, notifications, system_settings
   - New column: users.github_username
   - Altered: tasks — 7 new columns, old tree columns dropped
   - Dropped: project_groups, project_group_messages, evaluation_disputes,
@@ -28,7 +28,6 @@ from app.models.project import (
     TaskDiscussion,
     Notification,
     SystemSetting,
-    CicdEvent,
 )
 
 __all__ = [
@@ -70,5 +69,4 @@ __all__ = [
     "TaskDiscussion",
     "Notification",
     "SystemSetting",
-    "CicdEvent",
 ]

@@ -4,9 +4,9 @@ TRACE - Tasks API (task-by-id operations)
 Project-scoped list and create live under /projects/{id}/tasks. Everything here
 resolves the task's project and the caller's role in it first.
 
-PATCH /tasks/{id}/status is where completion authority is enforced (CORE.md §7):
-a Member gets 403 for Completed, always; only the Project Manager (or, from
-Phase 6, the CI/CD resolver) completes a task.
+PATCH /tasks/{id}/status is where status authority is enforced (CORE.md §7): the
+assignee updates their own task, completion included; the Project Manager may set
+any status; everyone else gets 403.
 """
 
 from fastapi import APIRouter, Depends, status
@@ -107,7 +107,7 @@ async def assign_task(
     return {"task": svc.task_dict(task, access), "warnings": warnings}
 
 
-@router.patch("/{task_id}/status", response_model=TaskResponse, summary="Change status — completion authority enforced")
+@router.patch("/{task_id}/status", response_model=TaskResponse, summary="Change status — assignee or Project Manager")
 async def update_task_status(
     task_id: int,
     data: TaskStatusUpdate,

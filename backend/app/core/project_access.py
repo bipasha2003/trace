@@ -9,7 +9,8 @@ resolves a `ProjectAccess` and asks it — never re-derives roles inline.
     Manager  → sees and administers only projects they created (Q11)
     Employee → needs a project_assignments row: 'Project Manager' or 'Member'
 
-Completion authority (CORE.md §7) is decided by `may_set_status`.
+Status authority (CORE.md §7) is decided by `may_set_status`: the assignee updates
+their own task, completion included; the Project Manager may set any status.
 """
 
 from dataclasses import dataclass
@@ -25,20 +26,16 @@ from app.models.user import User
 PROJECT_MANAGER = "Project Manager"
 MEMBER = "Member"
 
-# Statuses a Member may move their own task between. Never Completed.
-MEMBER_SETTABLE_STATUSES = {"Pending", "In Progress", "Blocked"}
-# Statuses only the system sets (nightly sweep / CI-CD resolver), never a human
+# Statuses the assignee may move their own task between. Cancelling is a scope
+# decision, so it stays with the Project Manager.
+ASSIGNEE_SETTABLE_STATUSES = {"Pending", "In Progress", "In Review", "Blocked", "Completed"}
+# Statuses only the system sets (the nightly overdue sweep), never a human
 SYSTEM_ONLY_STATUSES = {"Overdue"}
 TASK_STATUSES = {"Pending", "In Progress", "In Review", "Completed", "Blocked", "Overdue", "Cancelled"}
 
 
 def platform_roles(user: User) -> set[str]:
     return {ur.role.role_name for ur in (user.user_roles or []) if ur.role}
-
-
-class CompletionForbidden(TraceException):
-    def __init__(self):
-        super().__init__(403, "Completion is confirmed by CI/CD or the Project Manager")
 
 
 @dataclass
@@ -66,19 +63,19 @@ class ProjectAccess:
         if not self.is_project_manager:
             raise InsufficientPermissionsException()
 
+    def is_assignee(self, task: Task) -> bool:
+        return self.platform_role == "Employee" and task.assigned_to_user_id == self.user.id
+
     def may_set_status(self, task: Task, new_status: str) -> None:
         """CORE.md §7 — enforced here, in the API layer, whatever the UI shows."""
         if new_status in SYSTEM_ONLY_STATUSES:
             raise TraceException(403, f"'{new_status}' is set by the system, not by hand")
         if self.is_project_manager:
             return
-        if self.project_role == MEMBER and task.assigned_to_user_id == self.user.id:
-            if new_status == "Completed":
-                raise CompletionForbidden()
-            if new_status in MEMBER_SETTABLE_STATUSES:
+        if self.is_assignee(task):
+            if new_status in ASSIGNEE_SETTABLE_STATUSES:
                 return
-        if new_status == "Completed":
-            raise CompletionForbidden()
+            raise TraceException(403, f"Only the Project Manager can set '{new_status}'")
         raise InsufficientPermissionsException()
 
     def allowed_statuses(self, task: Task) -> list[str]:

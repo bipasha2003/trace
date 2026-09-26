@@ -1,7 +1,7 @@
 /**
  * TRACE — Tasks API (task-by-id)
  * Project-scoped list/create live in projectsApi. Status changes go through
- * updateStatus only — the server enforces completion authority (CORE.md §7).
+ * updateStatus only — the server enforces who may set which status (CORE.md §7).
  */
 
 import api from './client'

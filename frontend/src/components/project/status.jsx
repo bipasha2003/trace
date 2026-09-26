@@ -4,6 +4,7 @@
  */
 
 import { Badge } from '@/components/ui/badge'
+import { STATUS_TONE } from '@/lib/project'
 
 const TASK_VARIANT = {
   Pending: 'outline',
@@ -34,4 +35,18 @@ export function ProjectStatusBadge({ status }) {
 export function RoleBadge({ role }) {
   if (!role) return null
   return <Badge variant={role === 'Project Manager' ? 'default' : 'secondary'}>{role}</Badge>
+}
+
+const LEGEND = ['Pending', 'In Progress', 'In Review', 'Completed', 'Blocked', 'Overdue']
+
+export function StatusLegend({ className = '' }) {
+  return (
+    <div className={`flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground ${className}`}>
+      {LEGEND.map((s) => (
+        <span key={s} className="inline-flex items-center gap-1.5">
+          <span className={`size-2.5 rounded-full ${STATUS_TONE[s]}`} /> {s}
+        </span>
+      ))}
+    </div>
+  )
 }

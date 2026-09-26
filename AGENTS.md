@@ -96,7 +96,7 @@ A task is not complete until the docs describe what the code now does.
 
 Base URL `http://localhost:8000/api/v1`, proxied by Vite.
 
-### Built (Phases 3, 3a)
+### Built (Phases 3, 3a, 4)
 
 Platform role on the route, then the caller's project role from
 `app/core/project_access.py` — never re-derived inline.
@@ -123,34 +123,32 @@ GET    /tasks/mine                           my open tasks across projects (Empl
 GET    /tasks/{id}                           detail + can_edit + allowed_statuses
 PATCH  /tasks/{id}                           details only (PM) — never status
 PATCH  /tasks/{id}/assign                    assign / unassign + GitHub assignees (PM)
-PATCH  /tasks/{id}/status                    completion authority enforced HERE
+PATCH  /tasks/{id}/status                    status authority enforced HERE — assignee (Completed included) or PM
 DELETE /tasks/{id}                           soft delete + close issue as not planned (PM)
 GET    /tasks/health-summary                 Task Health totals (Admin)
 POST   /tasks/compute-health                 enqueue health recompute (Admin)
 GET    /admin/settings/github                org, committer; token only as token_set / token_source (Admin)
 PUT    /admin/settings/github                partial; token write-only — omitted keeps it, "" clears it (Admin)
 POST   /admin/settings/github/test           { ok, checks: [Token, Organization] } against the saved settings (Admin)
+GET    /projects/{id}/tree                   project → groups → tasks → assignees, live (anyone who sees the project)
+GET    /projects/{id}/gantt                  latest version, or ?version=N; null before the first (same)
+GET    /projects/{id}/gantt/versions         version history, newest first (same)
 ```
 
 ### To build
 
 | Module | Prefix | Purpose |
 |--------|--------|---------|
-| Gantt | `/projects/{id}/gantt` | Latest chart + version history |
 | Discussions | `/tasks/{id}/discussions` | Per-task threads |
 | Notifications | `/notifications` | List, mark read, unread count |
-| Settings | `/admin/settings/{mail,ai,cicd}` | The other Configuration sections + connection tests (GitHub is built) |
-| Webhooks | `/webhooks/cicd` | HMAC-signed CI/CD receiver |
+| Settings | `/admin/settings/{mail,ai}` | The other Configuration sections + connection tests (GitHub is built) |
 
 ```
 POST  /projects/{id}/evaluate                enqueue evaluate_project
 GET   /projects/{id}/evaluate/status         job state
 GET   /projects/{id}/suggest-managers        AI-ranked PM candidates
-GET   /projects/{id}/tree                    graph payload
-GET   /projects/{id}/gantt                   latest chart version
 PUT   /projects/{id}/doc                     edit project_doc → triggers re-eval
 GET   /projects/{id}/tasks/suggest-assignees AI-ranked Members
-POST  /webhooks/cicd                         CI/CD → AI completion resolution
 ```
 
 ### Keep
@@ -174,6 +172,7 @@ POST  /webhooks/cicd                         CI/CD → AI completion resolution
 | `/tasks/groups/*` | Group chat replaced by discussions |
 | `/tasks/tree/hierarchy`, `/tasks/{id}/evaluate-tree` | Infinite tree removed |
 | `/tasks/disputes*`, `/tasks/overallocations` | Deferred |
+| `/webhooks/cicd` | Never built — CI/CD-driven completion was removed from the design (2026-09-26) |
 | Legacy `/tasks` CRUD, `/tasks/{id}/push-github`, `/verify-commit`, timers, comments | Removed in Phase 3: generic `PATCH` let anyone complete a task; push-github faked URLs. Replaced by the routes above; discussions return in Phase 7 |
 
 ---
@@ -190,8 +189,8 @@ frontend/src/
     ui/                    ← shadcn-generated, NEVER hand-edit (Base UI: `render`, not `asChild`)
     ProjectSelector.jsx    ← topbar selector; the URL is the selected project
     project/               ← ProjectOverview · TaskBoard · TeamPanel · status badges · NotYetAvailable
-    ProjectTreeGraph.jsx
-    GanttChart.jsx
+    ProjectTreeGraph.jsx   ← @xyflow/react, base.css only; nodes styled with tokens
+    GanttChart.jsx         ← hand-built (divs + SVG), renders chart_data only
     NotificationBell.jsx
     ServiceMonitor.jsx
   pages/
@@ -202,7 +201,7 @@ frontend/src/
   contexts/
     AuthContext.jsx        ← JWT + platform role
     ThemeContext.jsx
-  lib/project.js           ← apiError, formatDate, isOverdue …
+  lib/project.js           ← apiError, formatDate, isOverdue, statusTone (status → token colour) …
   api/                     ← one module per backend router
 ```
 
@@ -235,20 +234,27 @@ frontend/src/
 - GitHub side effects that grant or revoke *access* (collaborator invites) never
   fail the change that caused them — return a `warnings` list. Side effects that
   *are* the record (repo ↔ project, issue ↔ task) do: no repo, no project.
+- **Gantt versions** are written only through `gantt_service.save_version()`, which
+  validates `chart_data` against `GanttChartData` (`app/schemas/gantt.py`,
+  [`docs/CORE.md`](docs/CORE.md) §5.1) and appends a new version — never an update.
+  The renderer reads nothing but `chart_data`, so every field it shows must be in it.
 - A task and its GitHub issue change together or not at all: call GitHub *before*
   committing, and roll back explicitly if it fails.
 - Responses tell the UI what the caller may do (`can_edit`, `allowed_statuses`),
   derived from the same `ProjectAccess` check the API enforces. The UI never
   re-derives authority.
-- **Completion authority is enforced in the API layer.** A Member calling
-  `PATCH /tasks/{id}/status` with `Completed` gets a 403, always.
-  ([`docs/CORE.md`](docs/CORE.md) §7)
+- **Status authority is enforced in the API layer** (`ProjectAccess.may_set_status`).
+  The task's assignee sets its status, `Completed` included; the Project Manager
+  sets any; everyone else gets 403. Completion is manual — there is no CI/CD or AI
+  completion, so don't build one. ([`docs/CORE.md`](docs/CORE.md) §7)
 - Schema changes ship as Alembic revisions, one concern per revision. **Alembic is
   the only thing that creates tables** — never `Base.metadata.create_all` in app
   code; `tests/test_migrations.py` fails if it comes back.
 - Every change ships with tests (`backend/tests/`). New routes get a row in the
   role matrix in `tests/api/v1/test_route_guards.py`; the static audit there
-  already fails any route without a guard.
+  already fails any route without a guard. Project-scoped routes need a project,
+  so their matrix (owner, other Manager, Admin, PM, Member, outsider, anonymous)
+  lives with them — see `test_visualisation.py`, built on `test_projects.py`'s `world`.
 - Celery tasks must be registered — `imports=["app.tasks"]` in `celery_app.py`, or
   discovery silently fails.
 
@@ -372,7 +378,6 @@ async with engine.begin() as conn:
 # ❌ never — trusts the client about who may complete a task
 task.status = payload.status
 
-# ✅ always — authority enforced server-side
-if payload.status == "Completed" and not caller_may_complete(user, task):
-    raise HTTPException(403, "Completion is confirmed by CI/CD or the Project Manager")
+# ✅ always — authority enforced server-side, in one place
+access.may_set_status(task, payload.status)   # assignee or PM, else 403
 ```

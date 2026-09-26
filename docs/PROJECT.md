@@ -24,7 +24,7 @@ Last revised 2026-09-26.
 ## 1. What TRACE is
 
 An **AI-driven project and task management platform**. A project enters as a pile
-of raw requirement documents and leaves as a delivered, CI/CD-verified set of
+of raw requirement documents and leaves as a delivered, tracked set of
 GitHub issues with auto-maintained documentation, a self-updating Gantt chart and
 progress reports.
 
@@ -33,7 +33,8 @@ progress reports.
 - Task groups (Gantt modules) and tasks, where a task **is** a GitHub issue
 - AI automation: project evaluation, task suggestion, assignee suggestion, Gantt
   generation, progress-doc authoring — all of [`CORE.md`](CORE.md)
-- CI/CD-driven task completion; a Member can never self-declare "done"
+- Manual task completion: the assignee marks their own task complete (no CI/CD or
+  AI involvement — [`CORE.md`](CORE.md) §7)
 - Per-task discussion, notifications, progress and completion reporting
 - A workforce record set, Admin-owned, because planning and assignment need to
   know who exists and who is available
@@ -65,8 +66,8 @@ retired (`Platform Admin` → `Admin`, `Staff` → `Employee`).
 
 | Project role | Assigned by | Can |
 |--------------|-------------|-----|
-| `Project Manager` | The project's Manager | Edit `project_doc`, create task groups and tasks, assign Members, mark a task complete, trigger AI re-evaluation |
-| `Member` | A Project Manager, by being assigned a task | See the project, work their tasks, push code, discuss, update their task progress — **cannot** mark a task complete |
+| `Project Manager` | The project's Manager | Edit `project_doc`, create task groups and tasks, assign Members, set any task's status (complete, cancel), trigger AI re-evaluation |
+| `Member` | A Project Manager, by being assigned a task | See the project, work their tasks, push code, discuss, update their tasks' status — **including marking them complete** |
 
 The same Employee may be a Project Manager on one project and a Member on another
 at the same time. The panel's project selector is what scopes the role.
@@ -89,7 +90,7 @@ Project                       ← created by a Manager, owns a GitHub repo
 - A **Task Group** is the planning unit and carries the Gantt bar: start date, end
   date, and a completion percentage rolled up from its tasks.
 - A **Task** is the atomic unit of work, mirrored 1:1 as a GitHub issue. It is the
-  only level assigned to a person and the only level CI/CD can complete.
+  only level assigned to a person, and the only level whose status a person sets.
 
 ### 3.1 Project tree graph
 Every project exposes a **graph view** — Project → Task Groups → Tasks → assignees,
@@ -128,7 +129,7 @@ Panels are fully separated by base route. There is no shared shell across roles.
 | **Control Panel** | `/admin/control-panel` | Generic CRUD over every table **except `system_settings`**, which holds encrypted secrets and is served only by Configuration. Raw and table-driven — the escape hatch, not the daily UI. |
 | **Workforce** | `/admin/workforce` | Curated UI over the whole workforce record set: employees, managers, leaves, holidays, attendance, work shifts, departments, designations. Every tab has CRUD **and bulk upload** (CSV/JSON). The same tables appear in Control Panel; this is the human view. |
 | **Monitor** | `/admin/monitor` | Server and service health: API, PostgreSQL, Redis, Celery worker, Celery beat, MinIO, Mailpit, WebSocket, LLM reachability, recent Celery job outcomes. |
-| **Configuration** | `/admin/configuration` | Runtime settings in the database, not only `.env`: mail/SMTP, AI provider (key, base URL, model), GitHub (the company's owner + token — [`CORE.md`](CORE.md) §4.1), CI/CD webhook secret. Per-section "test connection". |
+| **Configuration** | `/admin/configuration` | Runtime settings in the database, not only `.env`: mail/SMTP, AI provider (key, base URL, model), GitHub (the company's owner + token — [`CORE.md`](CORE.md) §4.1). Per-section "test connection". |
 | **Reports** | `/admin/reports` | **Pending definition** — see [`PLANNING.md`](PLANNING.md) Q7. Ships as a placeholder route. |
 
 ---
@@ -174,13 +175,13 @@ open tasks, due and overdue tasks, recent notifications.
 - **Task creation** — which creates the GitHub issue
 - Member assignment per task, with AI-ranked suggestions
 - Editing `project_doc`, which triggers Gantt re-evaluation
-- Marking a task complete — the only human permitted to (§ [`CORE.md`](CORE.md) §7)
+- Setting any task's status — completing one on someone's behalf, or cancelling it ([`CORE.md`](CORE.md) §7)
 
 ### 7.3 A project selected — as **Member**
 - The same dashboard, **read-only** with respect to project structure
 - Their assigned tasks, each task's `task_progress_doc`, and per-task discussion
-- Work is reported by pushing commits that reference the GitHub issue id
-- **No complete-task control anywhere**
+- They keep their own tasks' status current and **mark them complete** when done;
+  commits may reference the GitHub issue id, but nothing reads them automatically
 
 ---
 
@@ -190,7 +191,7 @@ open tasks, due and overdue tasks, recent notifications.
 |---------|-------------|
 | Task due notification | Notify assignee and Project Manager as a task approaches and passes its due date |
 | Assignment notification | Notify a Member when a task is assigned to them |
-| Completion notification | Notify assignee and Project Manager when the system marks a task complete |
+| Completion notification | Notify the Project Managers when a task is marked complete (and the assignee, if the PM completed it) |
 | Per-task discussion | Threaded discussion on each task between its assignee(s) and its assigner. Replaces the old project-wide group chat |
 | Gantt chart | Auto-created and auto-updated; never hand-maintained |
 | Project tree graph | Node-graph of Project → Task Group → Task → assignee |
@@ -271,7 +272,7 @@ Direct mapping from the original plan to the implemented fields.
 | `project_source_files` (multiple file field) | `project_source_files` table | Manager, at creation | Manager adds or removes files |
 | `Project_initial_doc` — "scrapped by AI from project_source_files" | `project_initial_doc` | **AI**, [`CORE.md`](CORE.md) §3 step 3 | **Never.** Immutable snapshot of what the AI first understood, so drift from the original brief stays visible |
 | `Project_doc` — "duplicate, updated as features shift" | `project_doc` | **AI** clones it, §3 step 4 | **Project Manager** edits it as features shift or are added; every save triggers Gantt re-evaluation |
-| `Progress_doc` — "updated by task completioner" | `project_progress_doc` | **AI**, weekly | Reads every `task_progress_doc` and rewrites it. Completion is machine-decided, so the "task completioner" is the AI/CI-CD path — [`CORE.md`](CORE.md) §6 |
+| `Progress_doc` — "updated by task completioner" | `project_progress_doc` | **AI**, weekly | Reads every `task_progress_doc` and current task statuses — which the task completioners (assignees) set by hand — and rewrites it. [`CORE.md`](CORE.md) §6 |
 | `ProjectReport_doc` — "updated by task completioner" | `project_report_doc` | **AI** | Same weekly job; this is what the Manager reads |
 | "Automatic gantt chart creation and updation by task completion" | `gantt_charts` table, versioned | **AI** | Created at §3 step 6; regenerated on completion, overdue, `project_doc` edit, or on demand — [`CORE.md`](CORE.md) §5 |
 | *(implied, per task)* | `tasks.task_progress_doc` | **AI**, on task creation | Steps + checklist, kept current — [`CORE.md`](CORE.md) §4 |
@@ -337,7 +338,7 @@ Materialised and regenerated, never patched.
 |--------|------|-------|
 | `project_id` | FK `projects.id` | |
 | `version` | `Integer` | Incremented per regeneration |
-| `chart_data` | `JSONB` | Bars, dependencies, milestones — the render payload |
+| `chart_data` | `JSONB` | Bars, dependencies, milestones — the render payload. Shape fixed by [`CORE.md`](CORE.md) §5.1 (`GanttChartData`); written only through `gantt_service.save_version()`, which validates it |
 | `generated_reason` | `String(100)` | `initial`, `task_status_change`, `project_doc_updated`, `manual` |
 | `generated_at` | `DateTime` | |
 
@@ -372,7 +373,7 @@ Backs Admin → Configuration.
 
 | Column | Type | Notes |
 |--------|------|-------|
-| `category` | `String(50)` | `mail`, `ai`, `github`, `cicd` |
+| `category` | `String(50)` | `mail`, `ai`, `github` |
 | `key` | `String(100)` | |
 | `value` | `Text` | For secrets, a Fernet token (key `SETTINGS_ENCRYPTION_KEY` in `.env`), decrypted only inside `resolve_setting()` |
 | `is_secret` | `Boolean` | Set by `store_setting()` for the keys in `SECRET_SETTINGS`. Never returned by any API — responses say only whether it is set, and from where |
@@ -392,21 +393,6 @@ GitHub keys ([`CORE.md`](CORE.md) §4.1):
 | `github.api_url` | no | `GITHUB_API_URL` | `https://api.github.com`; GitHub Enterprise otherwise. Not on the Configuration screen |
 | `github.committer_name` / `github.committer_email` | no | `GITHUB_COMMITTER_NAME` / `_EMAIL` | Identity on the commits TRACE makes |
 
-### 11.9 `cicd_events`
-
-Audit trail for the webhook that completes tasks.
-
-| Column | Type | Notes |
-|--------|------|-------|
-| `project_id` | FK `projects.id` | |
-| `provider` | `String(50)` | `github_actions`, etc. |
-| `commit_sha` / `commit_message` / `branch` | | |
-| `pipeline_status` | `String(30)` | `success`, `failure` |
-| `payload` | `JSONB` | Raw webhook body |
-| `resolved_task_ids` | `JSONB` | Tasks the AI decided this push completes — **may be several** |
-| `ai_reasoning` | `Text` | Why those tasks, for auditability |
-| `processed_at` | `DateTime` | |
-
 ---
 
 ## 12. Changes to `tasks`
@@ -420,13 +406,15 @@ Audit trail for the webhook that completes tasks.
 | `task_progress_doc` | `String(500)` | URL to the AI-authored steps doc |
 | `assigned_to_user_id` | FK `users.id` | Replaces employee-based assignment |
 | `assigned_by_user_id` | FK `users.id` | The assigning Project Manager |
-| `completed_by` | `String(20)` | `AI/CICD` or `Project Manager` |
+| `completed_by` | `String(20)` | `Assignee` or `Project Manager` — who set `Completed` ([`CORE.md`](CORE.md) §7) |
 | `completed_at` | `DateTime` | |
 
 **Keep** — `title`, `description`, `priority`, `status`, `due_date`,
 `estimated_hours`, `github_issue_id`, `github_issue_url`, `commit_hash`,
 `commit_verified`, `llm_verification_notes`, `health_score`, `health_reason`,
-`last_health_check`.
+`last_health_check`. (`commit_hash`, `commit_verified` and
+`llm_verification_notes` are legacy and unused since CI/CD completion was removed;
+they stay as recorded values.)
 
 **Drop** — `parent_task_id`, `team_lead_id`, `project_manager_id`,
 `task_level_role`, `tree_path`.
@@ -444,6 +432,7 @@ Audit trail for the webhook that completes tasks.
 | `system_menus` | Menus are code-defined per panel |
 | `role_menu_permissions` | Panel separation replaces the matrix |
 | `evaluation_disputes`, `task_commit_logs` | Deferred — see [`PLANNING.md`](PLANNING.md) |
+| `cicd_events` | Created in Phase 1, dropped 2026-09-26: CI/CD-driven completion was removed ([`CORE.md`](CORE.md) §7) |
 
 ## 14. Tables retained unchanged
 
@@ -457,8 +446,8 @@ Audit trail for the webhook that completes tasks.
 > `geo_latitude` / `geo_longitude` columns stay as recorded values; nothing
 > validates against them any more.
 >
-> `productivity_scores` is retained but **re-based**: inputs become task throughput,
-> on-time completion rate and CI/CD pass rate. Attendance is still recorded but is
+> `productivity_scores` is retained but **re-based**: inputs become task throughput
+> and on-time completion rate. Attendance is still recorded but is
 > no longer a scoring input. These scores are what the AI ranks on when it suggests
 > Project Managers and assignees ([`CORE.md`](CORE.md) §3).
 
@@ -471,7 +460,8 @@ revision per step, so a failed backfill rolls back without losing the new tables
 
 1. **Create** `projects`, `project_source_files`, `project_assignments`,
    `task_groups`, `gantt_charts`, `task_discussions`, `notifications`,
-   `system_settings`, `cicd_events`.
+   `system_settings`, `cicd_events` (`cicd_events` was dropped again on 2026-09-26
+   with CI/CD completion — revision `c4e1d2a7f9b3`).
 2. **Backfill**: each current root task (`parent_task_id IS NULL`) → a `projects`
    row; each depth-1 child → a `task_groups` row; every remaining descendant → a
    `tasks` row on its nearest ancestor group. Tasks deeper than depth 2 are
@@ -503,7 +493,7 @@ Stack constraints (shadcn/ui, Tailwind v4 tokens, `lucide-react` only) are in
 /admin/workforce          Employees · Managers · Leaves · Holidays ·
                           Attendance · Shifts · Departments & Designations
 /admin/monitor            Service & server health
-/admin/configuration      Mail · AI · GitHub · CI/CD settings
+/admin/configuration      Mail · AI · GitHub settings
 /admin/reports            Placeholder — PLANNING.md Q7
 /admin/settings           Own profile
 
@@ -532,7 +522,7 @@ Public, marketing-quality, and the only page a logged-out visitor sees besides
 
 Sections: hero (headline, subline, "Get started" → `/login`), the problem it
 solves, a three-step how-it-works mirroring the core flow (Manager uploads
-requirements → AI plans the project → CI/CD verifies delivery), a feature grid, a
+requirements → AI plans the project → the team delivers, task by task), a feature grid, a
 footer. Fully responsive, light/dark aware, built from the same tokens as the rest
 of the app so it does not read as a bolted-on site.
 
@@ -554,7 +544,7 @@ Reports         FileBarChart
 | **Control Panel** | Table picker grouped by category, then a generic data grid with create/edit/delete dialogs and filtering. Driven by the existing `MODEL_REGISTRY` pattern in `backend/app/api/v1/admin.py`. `system_settings` is deliberately not in it. |
 | **Workforce** | Tabs per §5. Purpose-built, not a raw grid: directory cards and search for people, an approve/reject queue for leaves, a calendar for holidays, a filterable log for attendance, a shift editor with employee assignment. Every tab has a **Bulk Upload** action (CSV/JSON) with a validation summary that reports rejected rows rather than failing silently. Attendance and shifts are Admin-maintained records — there is no clock-in control anywhere in the product. |
 | **Monitor** | `ServiceMonitor.jsx` promoted from a header overlay to a page. Health cards for API, PostgreSQL, Redis, Celery worker, Celery beat, MinIO, Mailpit, WebSocket and LLM, plus recent Celery job outcomes. |
-| **Configuration** | Sections for Mail/SMTP, AI provider, GitHub, CI/CD webhook. Secrets are write-only (masked, never returned), each section with "Test connection". Writes to `system_settings`. **GitHub is built (Phase 3a)** — organization, token (a password field showing only *Not set / Set here / Set in .env*; blank keeps it, "Clear saved token" falls back to `.env`), committer name and email. *Test connection* runs against the **saved** settings (disabled while there are unsaved edits) and reports two checks: token authenticates, organization visible. Repos are always public, so there is no visibility setting. Mail, AI and CI/CD remain Phase 8 placeholders. |
+| **Configuration** | Sections for Mail/SMTP, AI provider, GitHub. Secrets are write-only (masked, never returned), each section with "Test connection". Writes to `system_settings`. **GitHub is built (Phase 3a)** — organization, token (a password field showing only *Not set / Set here / Set in .env*; blank keeps it, "Clear saved token" falls back to `.env`), committer name and email. *Test connection* runs against the **saved** settings (disabled while there are unsaved edits) and reports two checks: token authenticates, organization visible. Repos are always public, so there is no visibility setting. Mail and AI remain Phase 8 placeholders. |
 | **Reports** | Placeholder page stating the report set is pending definition. |
 
 ## 19. Manager panel UI
@@ -607,23 +597,24 @@ state, an overdue callout, recent notifications.
 **A project selected — Project Manager** — tabs **Overview · Tree · Gantt · Tasks ·
 Project Doc · Team**:
 - *Tasks* — board grouped by task group, with **Create Task**. The dialog calls the
-  assignee-suggestion endpoint and shows ranked Members with reasoning. Completing
-  a task happens here, behind a confirmation that records
-  `completed_by='Project Manager'`.
+  assignee-suggestion endpoint and shows ranked Members with reasoning. The PM can
+  set any task's status, including completing it on someone's behalf
+  (`completed_by='Project Manager'`) and cancelling it.
 - *Project Doc* — markdown editor over `project_doc`. Saving triggers Gantt
   re-evaluation; say so in the UI *before* saving.
 - *Team* — the project's Members.
 
 **A project selected — Member** — tabs **Overview · Tree · Gantt · My Tasks**.
-Read-only with respect to project structure. No create-task control, and **no
-complete-task control anywhere** — the task view instead explains that completion
-is confirmed by CI/CD.
+Read-only with respect to project structure. No create-task control. On **their
+own** tasks a Member sets the status — Pending, In Progress, In Review, Blocked and
+**Completed** (behind a confirmation; `completed_by='Assignee'`). Cancelling is the
+Project Manager's call.
 
 **Task detail** — description, linked GitHub issue, the rendered
-`task_progress_doc` with its step checklist, status timeline, CI/CD events that
-referenced the task, and the discussion thread. The status control is disabled for
-Members with an explanatory tooltip, and the view states the
-push-with-the-issue-id convention ([`CORE.md`](CORE.md) §7).
+`task_progress_doc` with its step checklist, status timeline and the discussion
+thread. The status buttons are exactly the server's `allowed_statuses`; anyone who
+is neither the assignee nor the Project Manager sees none
+([`CORE.md`](CORE.md) §7).
 
 ## 21. Project tree graph
 
@@ -644,12 +635,30 @@ Node colour encodes status (pending / in progress / completed / blocked /
 overdue). Task nodes show the assignee avatar; clicking one opens its detail. Pan
 and zoom required. Available to all three audiences, read-only for Members.
 
+*As built (Phase 4):* `GET /projects/{id}/tree` returns project → task groups (by
+`sequence`) → tasks (deleted ones left out, cancelled ones shown faded) with
+assignee, due date, `overdue` and issue URL — a live read, no stored snapshot.
+Groups are laid out as columns, each group's tasks hanging off a rail beneath it.
+Selecting a task opens a small panel with its status, assignee, due date, a link
+to the GitHub issue and — in the Employee panel — *Open task*. The Manager has no
+task detail page, so the panel is the detail there. Zoom buttons, fit-to-view and
+a status legend; nothing is draggable.
+
 ## 22. Gantt chart
 
 Renders `gantt_charts.chart_data` at the latest version. One bar per **task group**,
 expandable to its tasks, with a today marker, dependency arrows and a completion
 overlay per bar. Read-only everywhere — it is regenerated, never dragged. Show the
 version number and `generated_reason` so users understand why it moved.
+
+*As built (Phase 4):* `GET /projects/{id}/gantt` (latest, or `?version=N`; JSON
+`null` before the first version) and `GET /projects/{id}/gantt/versions`. The
+chart renders only its stored `chart_data`, so an older version shows what was true
+then — a version picker lets anyone look back. A task has no start date, so an
+expanded group shows each task as a marker on its due date. The day scale adapts
+to the range and the chart scrolls sideways with the group names pinned. Until
+Phase 5 generates versions, a project without a hand-written row shows "No Gantt
+chart yet".
 
 ## 23. Existing pages — disposition
 
@@ -697,14 +706,14 @@ version number and `generated_reason` so users understand why it moved.
 | `project_source_files` multi-upload (MinIO) | ✅ | pdf / docx / md / txt, 20 MB each; text extracted at upload; rejects reported per file |
 | The four project documents | 🔲 | Columns exist; population in Phase 5 |
 | Project Manager assignment / removal | ✅ | Plain picker; a removed PM holding tasks stays as Member. AI ranking is Phase 5 |
-| Manager combined + per-project dashboards | ✅ | Tree, Gantt and Progress Report tabs are placeholders until Phases 4–5 |
+| Manager combined + per-project dashboards | ✅ | Tree and Gantt tabs built (Phase 4); Progress Report is a placeholder until Phase 5 |
 | GitHub owner model — one company owner + token | ✅ | Phase 3a. Admin → Configuration → GitHub; token Fernet-encrypted at rest, write-only; `/admin/settings/github` + `/test`. Production refuses to start without `SETTINGS_ENCRYPTION_KEY` |
 | Repo created by TRACE per project | ✅ | Phase 3a. `<org>/<name-slug>`, public, `auto_init`; created before the row; clash → 409; no token or org → 503; token without Administration → precise 502 |
 | Repo archived on project delete | ✅ | Phase 3a follow-up. Archive before soft-delete; failure keeps the project; only repos under the organization. API only — there is no delete-project button |
 | Member removal, resend invitation | ❌ | Not planned — educational scope (`PLANNING.md` §4). Re-assigning a task re-invites |
 | Collaborator invite on joining a project | ✅ | Phase 3a. *Write* on PM appointment and on every task assignment (idempotent); revoked, with any pending invitation withdrawn, when a PM leaves. Never blocks the change — problems are warnings. Pending invitation → issue created unassigned + warning; assign again once accepted. No invite UI of its own |
-| Project tree graph | 🔲 | |
-| Gantt chart, versioned | 🔲 | `gantt_charts` table exists; population in Phase 5 |
+| Project tree graph | ✅ | Phase 4. `GET /projects/{id}/tree` (live read) → `ProjectTreeGraph.jsx` (`@xyflow/react`, pan/zoom); Manager, Admin, PMs and Members, read-only |
+| Gantt chart, versioned | 🔄 | Phase 4: `chart_data` schema (`CORE.md` §5.1, validated on every write), deterministic builder, read API + version history, `GanttChart.jsx`. The demo project has a hand-written v1. Nothing generates versions yet — Phase 5 (Stage 1 step 6, `reevaluate_gantt`) |
 
 ### Task groups & tasks
 | Feature | Status | Notes |
@@ -714,7 +723,7 @@ version number and `generated_reason` so users understand why it moved.
 | Task ↔ GitHub issue 1:1 on creation | ✅ | Same request; GitHub failure rolls the task back; no token → 503. Complete/cancel/delete close the issue |
 | GitHub issue assignment to Member | ✅ | Via `users.github_username` (Q9, self-service in Profile); missing username → unassigned issue + warning |
 | `task_progress_doc` per task | ✅ | Column exists; population in Phase 5 |
-| Completion authority enforcement | ✅ | `ProjectAccess.may_set_status`; Member → 403 on Completed; PM completion records `completed_by` |
+| Status authority enforcement | ✅ | `ProjectAccess.may_set_status`: the assignee sets their own task's status, **Completed included** (`completed_by='Assignee'`); the PM any status; others 403. Reworked 2026-09-26 — Members were previously refused Completed |
 | Per-task discussion | ✅ | `task_discussions` table created Phase 1 |
 | Infinite tree, `Team Lead`, rotating roles | ❌ | Flattened to three levels |
 | Task board grouped by task group | ✅ | Replaces the old Kanban (`TasksPage.jsx` deleted) |
@@ -729,9 +738,9 @@ version number and `generated_reason` so users understand why it moved.
 | AI generates `task_progress_doc` | 🔲 | |
 | Gantt re-evaluation triggers | 🔲 | `CORE.md` §5 |
 | Weekly progress roll-up | 🔲 | `CORE.md` §6 |
-| CI/CD webhook → AI completion | 🔲 | One push may complete several tasks |
-| LLM commit verification | 🔄 | Becomes the CI/CD completion resolver |
-| Performance scoring | 🔄 | Re-base on task + CI/CD signals |
+| CI/CD webhook → AI completion | ❌ | Removed 2026-09-26 — completion is manual ([`CORE.md`](CORE.md) §7, [`PLANNING.md`](PLANNING.md) §4). `cicd_events` dropped |
+| LLM commit verification | ❌ | Was to become the CI/CD resolver; removed with it |
+| Performance scoring | 🔄 | Re-base on task signals (throughput, on-time rate) |
 | Task Health Score | ✅ | Retained as a progress-reporting input |
 | Dispute Queue · Auto-Escalation · Overallocation · Scope-Drift | 💤 | Deferred — [`PLANNING.md`](PLANNING.md) |
 
@@ -749,7 +758,7 @@ version number and `generated_reason` so users understand why it moved.
 | Workforce — full record set | 🔄 | Exists split across pages; consolidate |
 | Bulk upload on every Workforce tab | 🔄 | `/hrms/bulk-upload` exists; extend + report rejected rows |
 | Monitor page | ✅ | Promoted from header overlay to /admin/monitor full page |
-| Configuration via `system_settings` | 🔄 | Resolution (DB → `.env`), secret encryption and the **GitHub** section built (Phase 3a). Mail, AI and CI/CD sections in Phase 8 |
+| Configuration via `system_settings` | 🔄 | Resolution (DB → `.env`), secret encryption and the **GitHub** section built (Phase 3a). Mail and AI sections in Phase 8 |
 | Reports | 🔲 | Placeholder — **Q7 blocks the contents** |
 
 ### Workforce (Admin-owned records)
@@ -772,8 +781,7 @@ version number and `generated_reason` so users understand why it moved.
 | Backend test suite | ✅ | Own `trace_test` DB built by migrations; route-guard audit + role matrix; migration-chain test |
 | WebSocket endpoint | ✅ | Re-point from group chat to notifications/discussion |
 | GitHub API integration | ✅ | `github_service.py`: repo create, collaborator add / remove (+ invitation withdrawal), token and organization checks, issue create / assign / open-close, file commit |
-| CI/CD receiver webhook (HMAC) | 🔲 | |
-| The project's own CI/CD pipeline | 🔲 | Explicitly a task in the build |
+| CI/CD receiver webhook (HMAC) | ❌ | Removed with CI/CD completion (2026-09-26) |
 | Single root `.env` | ✅ | The only env file; backend derives DB / Redis / MinIO / SMTP settings from the Compose keys |
 | `APP_ENV` local / production separation | ✅ | Two checks only: `Settings.is_production` and `start.sh`. Production preflight refuses placeholders and seeded passwords |
 | Public hosting via Cloudflare Tunnel | ✅ | `cloudflared` compose service (profile `production`, host networking); routes in README |
@@ -786,7 +794,7 @@ version number and `generated_reason` so users understand why it moved.
 | Three panel layouts | ✅ | AdminLayout (sidebar) + ManagerLayout + EmployeeLayout (topbar only) |
 | Landing page | ✅ | Public marketing page at / with hero, how-it-works, feature grid |
 | Project selector topbar | ✅ | `components/ProjectSelector.jsx`, URL-driven |
-| Gantt + graph components | 🔲 | |
+| Gantt + graph components | ✅ | `components/GanttChart.jsx` (hand-built, tokens only), `components/ProjectTreeGraph.jsx` (`@xyflow/react` base styles only) |
 | Toasts (`sonner`) | ✅ | |
 | Responsive / mobile | 🔄 | Desktop only today |
 
@@ -797,10 +805,10 @@ version number and `generated_reason` so users understand why it moved.
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | Project hierarchy | Project → Task Group → Task, fixed depth | The Gantt needs a stable module level; infinite nesting made modules undefinable |
-| Task identity | A task **is** a GitHub issue | One source of truth for work items; enables CI/CD-driven completion |
+| Task identity | A task **is** a GitHub issue | One source of truth for work items; developers see their work where the code lives |
 | Document storage | Markdown in the project's GitHub repo, URL in the DB | Docs get version history for free and stay reviewable by developers |
 | Source file storage | MinIO | Binary requirement docs are not repo content |
-| Completion authority | AI via CI/CD, or Project Manager | Prevents self-declared completion; the PM override exists for tasks that precede CI/CD |
+| Completion authority | The assignee, or the Project Manager | The person doing the work knows when it is done; automating that (CI/CD + AI) was more machinery than an educational project needs |
 | Gantt maintenance | Regenerate a new version, never patch | Reproducible and auditable; `generated_reason` explains every change |
 | `project_initial_doc` immutable | Write-once | Gives `project_doc` something to measure scope drift against |
 | AI execution | Celery only, structured JSON only | Keeps request handlers fast; makes verdicts queryable and auditable |

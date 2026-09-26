@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ChartGantt, FileBarChart, Network, RefreshCw } from 'lucide-react'
+import { FileBarChart, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -16,6 +16,8 @@ import ProjectOverview from '@/components/project/ProjectOverview'
 import TaskBoard from '@/components/project/TaskBoard'
 import TeamPanel from '@/components/project/TeamPanel'
 import NotYetAvailable from '@/components/project/NotYetAvailable'
+import ProjectTreeGraph from '@/components/ProjectTreeGraph'
+import GanttChart from '@/components/GanttChart'
 import { ProjectStatusBadge } from '@/components/project/status'
 import { apiError } from '@/lib/project'
 
@@ -63,16 +65,8 @@ export default function ManagerProjectDetailPage() {
         </TabsList>
         <TabsContent value="overview"><ProjectOverview project={project} isOwner onChange={load} /></TabsContent>
         <TabsContent value="tasks"><TaskBoard projectId={project.id} /></TabsContent>
-        <TabsContent value="tree">
-          <NotYetAvailable icon={Network} title="Project tree">
-            The graph of task groups, tasks and assignees is not available yet.
-          </NotYetAvailable>
-        </TabsContent>
-        <TabsContent value="gantt">
-          <NotYetAvailable icon={ChartGantt} title="Gantt chart">
-            The Gantt chart is generated when the project is evaluated, and is not available yet.
-          </NotYetAvailable>
-        </TabsContent>
+        <TabsContent value="tree"><ProjectTreeGraph projectId={project.id} /></TabsContent>
+        <TabsContent value="gantt"><GanttChart projectId={project.id} /></TabsContent>
         <TabsContent value="report">
           <NotYetAvailable icon={FileBarChart} title="Progress report">
             The progress document and project report are written by the AI once the project is evaluated.

@@ -3,7 +3,7 @@
 > Step-by-step requirements for agents building TRACE, in dependency order.
 >
 > **Before starting any phase:** read [`PROJECT.md`](PROJECT.md) for what you are
-> building, [`CORE.md`](CORE.md) if the phase touches AI or completion, and
+> building, [`CORE.md`](CORE.md) if the phase touches AI, the Gantt or task status, and
 > [`PLANNING.md`](PLANNING.md) for the open questions in that area. Conventions are
 > in [`../AGENTS.md`](../AGENTS.md).
 
@@ -19,13 +19,15 @@
 | 2 · Panels, landing, route guards | ✅ |
 | 3 · Projects, without AI | ✅ built and tested — see its status note for what is unverified |
 | 3a · GitHub owner model | ✅ built, tested, and verified against real GitHub (opt-in live test) |
-| **4 · Visualisation** | 🔲 **next** — read *Starting Phase 4* below |
-| 5 – 9 | 🔲 not started. Phase 8 may run in parallel |
+| 4 · Visualisation | ✅ built and tested; not browser-checked (user decision) |
+| **5 · The AI pipeline** | 🔲 **next** — read *Starting Phase 5* below |
+| 7 – 9 | 🔲 not started. Phase 8 may run in parallel |
+| ~~6 · CI/CD-driven completion~~ | ❌ **removed** 2026-09-26 — the assignee marks their own task complete ([`CORE.md`](CORE.md) §7) |
 
 **Verify before you trust this table** — facts that change outside the docs:
 - `git log --oneline -5` and `git status` — what is committed; untracked files are
   how Phase 2 once went missing from `main`.
-- `cd backend && .venv/bin/python -m pytest -q` — 281 passing and 2 skipped at handoff (the skips are the opt-in live GitHub test). The suite
+- `cd backend && .venv/bin/python -m pytest -q` — 326 passing and 2 skipped at handoff (the skips are the opt-in live GitHub test). The suite
   uses its own `trace_test` database (built by Alembic) and fakes GitHub and MinIO,
   so it is safe to run anywhere — but it needs the Compose `db` **and** `redis`
   services up (`docker compose up -d db redis`); without Redis three job-poll tests
@@ -47,6 +49,10 @@
   secret unreadable** (re-enter them). Don't regenerate it casually.
 - `cryptography` was added to `requirements.txt` — reinstall the venv
   (`pip install -r requirements.txt`) on any other checkout before starting.
+- `@xyflow/react` was added to `frontend/package.json` in Phase 4 — run `npm install`
+  in `frontend/` on any other checkout.
+- The local database is at Alembic head `c4e1d2a7f9b3` (drops `cicd_events`). A
+  database that runs production must be migrated too — `./start.sh start` does it.
 - Only the Admin can create Admin / Manager accounts. Production does not seed demo
   users, and refuses to start while any seeded account still has its published
   password — change them with `./start.sh set-password <email>` (README → Production).
@@ -68,33 +74,40 @@
 - `services/scoring_service.py` still reads the dropped `Task.assigned_to` —
   `/productivity/compute*` fails until Phase 5 step 3 re-bases scoring.
 - `components/ServiceMonitor.jsx` links to Mailpit / MinIO / pgAdmin at `localhost` — Phase 8.
-- Tree, Gantt, Progress Report and Project Doc tabs are placeholders — Phases 4–5.
+- Progress Report and Project Doc tabs are placeholders — Phase 5.
+- **Nothing generates Gantt versions yet.** Only the demo project has one (hand-written
+  v1); every other project shows "No Gantt chart yet" until Phase 5.
+- The nightly `mark_delayed_tasks` (`app/tasks.py`, Celery Beat) is pre-re-spec: it
+  sets past-due `Pending` / `WIP` tasks to **`Delayed`**, a status that no longer
+  exists. Harmless only while Beat is not running. Phase 7 step 5 replaces it with
+  `mark_overdue_tasks` (`CORE.md` §8) — do that early if Beat is started.
 - Old pages `AttendancePage`, `EmployeesPage`, `ProductivityPage`, `AdminPanelPage`,
   `FilesPage`, `SettingsPage` are unrouted; Phase 8 rebuilds or deletes them.
 
 *Not planned* (user decision, `PLANNING.md` §4): removing Members from a project,
 a resend-invitation action. Don't build them unasked.
 
-**Starting Phase 4** — what the phase text below does not tell you
-- **`gantt_charts.chart_data` has no defined shape.** PROJECT.md §11.5 says only
-  "bars, dependencies, milestones". The Gantt is CORE territory, so **define the JSON
-  schema in `CORE.md` §5 first** (one bar per task group with planned start/end and
-  completion, expandable task rows, dependency pairs, milestones), then build to it.
-  Phase 5's `reevaluate_gantt` will have to produce exactly that shape and validate
-  against it (AGENTS.md §4), so keep it small and explicit.
-- **The tree needs no new data** — project → `task_groups` → `tasks` already carry
-  status, assignee and `github_issue_url`. `GET /projects/{id}/tree` is a read over
-  them, guarded by `resolve_project_access` like every project route; add it (and the
-  Gantt route) to the role matrix in `tests/api/v1/test_route_guards.py`.
-- **No graph or pan/zoom library is installed** (only `recharts`, which suits neither
-  a tree nor a Gantt well). Choosing one — e.g. `@xyflow/react` for the tree — is a
-  decision to log in `PLANNING.md` §2. It must render with shadcn tokens in both themes.
-- **Gantt data before Phase 5:** "Done when" allows a hand-written `chart_data` row.
-  Build it from the project's task groups (they have `planned_start_date`,
-  `planned_end_date`, `completion_percentage`) so the demo project shows something real.
-- Both views replace placeholder tabs that already exist in the Manager and
-  Employee project pages (`components/project/NotYetAvailable.jsx` is the
-  placeholder); read-only everywhere, and for Members.
+**Starting Phase 5** — what the phase text below does not tell you
+- **Read `CORE.md` in full first** — it changed on 2026-09-26: completion is manual
+  (§7, no CI/CD, no AI), and §5.1 now fixes the `chart_data` shape.
+- **The Gantt plumbing exists; only the AI is missing.** `gantt_service.snapshot(db,
+  project, reason, dependencies)` builds a valid version from the task groups and
+  saves it; `save_version()` validates anything else against `GanttChartData`.
+  Stage 1 step 6 = write dates/durations into the task groups, then `snapshot(...,
+  "initial", dependencies=...)`. `reevaluate_gantt` needs its triggers wired:
+  `project_service.set_status` (→ Completed), the overdue sweep, a `project_doc`
+  save, and a manual button — debounced (CORE §5).
+- **`task_groups` has no dependency column.** The AI's `depends_on` (CORE §3 step 5)
+  names groups; decide whether to add a column (one Alembic revision) so
+  re-evaluations keep the dependencies, and log it in `PLANNING.md` §2.
+- **There is no AI service layer yet** — only `llm_chat_task` in `app/tasks.py`,
+  which reads `OPENAI_*` straight from `Settings`. Step 1 must resolve credentials
+  through `resolve_setting(db, "ai", …)` (the `ai.api_key` secret is already in
+  `SECRET_SETTINGS`) and validate every response against a schema (AGENTS.md §4).
+  Tests must fake the model the way `fake_github` fakes GitHub — no real LLM calls.
+- `services/scoring_service.py` still reads the dropped `Task.assigned_to` — step 3
+  re-bases it on task signals only (no CI/CD any more).
+- Every AI action is enqueue-and-poll (AGENTS.md §5); the job-result endpoint exists.
 
 ---
 
@@ -114,12 +127,13 @@ a resend-invitation action. Don't build them unasked.
 
 **Dependency graph**
 ```
-Phase 0 ─► Phase 1 ─► Phase 2 ─► Phase 3 ─► Phase 3a ─► Phase 4 ─► Phase 5 ─► Phase 6 ─► Phase 7
+Phase 0 ─► Phase 1 ─► Phase 2 ─► Phase 3 ─► Phase 3a ─► Phase 4 ─► Phase 5 ─► Phase 7
                           │
                           └────────────────────────────────────────► Phase 8 ─► Phase 9
 ```
-Phase 8 needs only 0–2 and may run in parallel with 3–7 (its GitHub section is Phase 3a). Phase 6 must not start
-before Phase 5 — completion resolution depends on the AI service layer.
+Phase 8 needs only 0–2 and may run in parallel with 3–7 (its GitHub section is Phase 3a).
+Phase 6 (CI/CD-driven completion) was removed; the numbers of later phases are kept
+so existing references stay valid.
 
 ---
 
@@ -373,15 +387,16 @@ Build the full manual path first, so the AI layer has something real to plug int
    GitHub issue creation** on task create.
 7. Employee panel: project selector, combined dashboard, PM view, Member view,
    task detail (§20).
-8. **Completion authority enforced server-side** ([`CORE.md`](CORE.md) §7): Member
-   403, Project Manager allowed, result recorded in `completed_by`.
+8. **Status authority enforced server-side** ([`CORE.md`](CORE.md) §7), result
+   recorded in `completed_by`. *(Built with Member → 403 on Completed; reworked
+   2026-09-26 so the assignee completes their own task.)*
 
 **Done when:** a Manager can create a project and assign a PM, and that PM can
 create tasks that appear as GitHub issues — with no AI involved at all.
 
 **Tests:** the legacy `tests/api/v1/test_tasks_attendance.py` was removed in Phase 2
 (it exercised clock-in/out and the tree-era `/tasks` router); Phase 3's
-`test_projects.py` replaces it, including the Member-gets-403 completion rule.
+`test_projects.py` replaces it, including the status-authority rules.
 
 ---
 
@@ -457,7 +472,7 @@ the repository TRACE created.
 
 ---
 
-## Phase 4 — Visualisation
+## Phase 4 — Visualisation ✅
 
 1. `GET /projects/{id}/tree` graph payload, and `ProjectTreeGraph.jsx` with pan and
    zoom ([`PROJECT.md`](PROJECT.md) §21).
@@ -467,6 +482,24 @@ the repository TRACE created.
 
 **Done when:** both render from real data — hand-write a `chart_data` row if Phase 5
 has not landed yet.
+
+*Status: built and tested 2026-09-26 (326 backend tests; frontend builds). Not
+checked in a browser — the user decided that is not required.*
+
+- *Spec first:* `chart_data` is defined in [`CORE.md`](CORE.md) §5.1 and enforced by
+  `GanttChartData` (`app/schemas/gantt.py`) on every write.
+- *Backend:* `services/gantt_service.py` — `project_tree`, the deterministic
+  `build_chart_data`, `save_version` (validate + append), `snapshot`, `versions`.
+  Routes in `api/v1/projects.py`: `GET /projects/{id}/tree`, `/gantt` (`?version=`,
+  `null` before the first), `/gantt/versions`, guarded by `resolve_project_access`.
+- *Frontend:* `components/ProjectTreeGraph.jsx` (`@xyflow/react`, new dependency,
+  `base.css` only) and `components/GanttChart.jsx` (hand-built), wired into the
+  Manager and Employee project pages; `statusTone` / `StatusLegend` shared.
+- *Data:* the demo seed now sets planned dates and writes Gantt v1 with two
+  dependencies; the local database's project 1 was given the same.
+- *Tests:* `tests/api/v1/test_visualisation.py` — project-scoped role matrix,
+  read-only methods, tree contents, version history, builder, schema refusals,
+  and the demo seed's chart.
 
 ---
 
@@ -479,7 +512,7 @@ has not landed yet.
    Enforce [`CORE.md`](CORE.md) §2 — no exceptions.
 2. `evaluate_project` steps 1–6: extract → `project_initial_doc` → `project_doc` →
    task groups → Gantt v1 ([`CORE.md`](CORE.md) §3).
-3. Re-base performance scoring on task and CI/CD signals. Attendance stays
+3. Re-base performance scoring on task signals (throughput, on-time rate). Attendance stays
    recorded but leaves the score's inputs.
 4. PM suggestion and assignee suggestion endpoints (§3 steps 7–8, §4).
    **Suggestions only — never auto-assign.**
@@ -494,20 +527,15 @@ produces a project document, task groups and a Gantt chart.
 
 ---
 
-## Phase 6 — CI/CD-driven completion
+## Phase 6 — CI/CD-driven completion ❌ removed
 
-**Read [`CORE.md`](CORE.md) §7.** Do not start before Phase 5.
-
-1. `POST /webhooks/cicd`, HMAC-verified, persisting `cicd_events`.
-2. `resolve_cicd_completion` — the AI maps a push to **one or more** tasks. High
-   confidence completes; low confidence goes to `In Review` for the Project Manager.
-3. On completion: set `completed_by='AI/CICD'`, notify, re-evaluate the Gantt.
-4. Build the project's own GitHub Actions pipeline that calls the webhook. This is
-   itself a task, and by definition the Project Manager closes it manually.
-5. Surface the push-with-the-issue-id convention in the task detail UI.
-
-**Done when:** a push referencing an issue closes its task in TRACE without a human
-touching the status.
+Removed on 2026-09-26 before any of it was built (user decision, [`PLANNING.md`](PLANNING.md) §4).
+Completion is manual: the task's assignee sets its status, `Completed` included, and
+the Project Manager may set any status ([`CORE.md`](CORE.md) §7). What changed in the
+code: `ProjectAccess.may_set_status` lets the assignee complete (`completed_by='Assignee'`),
+the `cicd_events` table and model were dropped (revision `c4e1d2a7f9b3`), and the
+CI/CD copy left the task page, the issue body, the landing page and Configuration.
+There is no webhook, no resolver job and no CI/CD configuration section. Don't rebuild them.
 
 ---
 
@@ -515,14 +543,15 @@ touching the status.
 
 1. The `notifications` API, header bell, unread count, deep links.
 2. Assignment, due-soon, overdue and completion notifications, in-app and via
-   Mailpit ([`CORE.md`](CORE.md) §9).
+   Mailpit ([`CORE.md`](CORE.md) §9) — including a task completed by its assignee
+   reaching the Project Managers.
 3. Per-task discussion threads with the visibility rules in
    [`PROJECT.md`](PROJECT.md) §11.6.
 4. Re-point the existing WebSocket from group chat to notifications and discussion.
 5. Set the Celery Beat schedule per [`CORE.md`](CORE.md) §8; retire the hourly
    health job and the nightly overallocation job.
 
-**Done when:** an assignment, a due date and a system completion each reach the
+**Done when:** an assignment, a due date and a completion each reach the
 right people without anyone refreshing a page.
 
 ---
@@ -531,7 +560,7 @@ right people without anyone refreshing a page.
 
 May run in parallel with Phases 4–7.
 
-1. The Configuration screen over `system_settings` — mail, AI, CI/CD (GitHub
+1. The Configuration screen over `system_settings` — mail and AI (GitHub
    already built in Phase 3a) — with write-only secrets and per-section connection tests.
 2. Workforce consolidation into one curated UI with tabs for employees, managers,
    leaves, holidays, **attendance, shifts**, departments and designations. Every

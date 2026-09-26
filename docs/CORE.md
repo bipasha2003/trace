@@ -8,7 +8,7 @@
 > file first and in full. Where any other document conflicts with it, this wins.
 
 **Related:** [`PROJECT.md`](PROJECT.md) (roles, schema, UI) ·
-[`DEVELOPMENT.md`](DEVELOPMENT.md) (build phases 5 and 6 implement this) ·
+[`DEVELOPMENT.md`](DEVELOPMENT.md) (build phase 5 implements this) ·
 [`PLANNING.md`](PLANNING.md) (open questions and deferred AI work)
 
 ---
@@ -16,31 +16,34 @@
 ## 1. The pipeline in one view
 
 ```
- Manager                AI                 Project Manager        Member          CI/CD
-   │                     │                        │                 │               │
-   ├─ create project     │                        │                 │               │
-   ├─ upload source ────►│                        │                 │               │
-   ├─ "Evaluate Project" │                        │                 │               │
-   │                     ├─ project_initial_doc   │                 │               │
-   │                     ├─ project_doc (clone)   │                 │               │
-   │                     ├─ task groups + Gantt   │                 │               │
-   │                     ├─ suggest PMs ─────────►│                 │               │
-   │◄── assigns PM ──────┤                        │                 │               │
-   │                     ├─ suggest tasks ───────►│                 │               │
-   │                     │                        ├─ edits project_doc              │
-   │                     │◄── re-evaluate Gantt ──┤                 │               │
-   │                     │                        ├─ creates task ──┤               │
-   │                     │◄─────────────────────  │  (= GitHub issue)               │
-   │                     ├─ task_progress_doc     │                 │               │
-   │                     │                        ├─ assigns ──────►│               │
-   │                     │                        │                 ├─ pushes ─────►│
-   │                     │◄──────────────────── webhook ────────────┼───────────────┤
-   │                     ├─ resolve which task(s) the push completed │               │
-   │                     ├─ mark Completed, notify, re-evaluate Gantt│               │
-   │                     │                        │                 │               │
-   │                     ├─ weekly: task_progress_doc ×N → project_progress_doc      │
-   │◄── progress report ─┤                        │                 │               │
+ Manager                AI                 Project Manager        Member
+   │                     │                        │                 │
+   ├─ create project     │                        │                 │
+   ├─ upload source ────►│                        │                 │
+   ├─ "Evaluate Project" │                        │                 │
+   │                     ├─ project_initial_doc   │                 │
+   │                     ├─ project_doc (clone)   │                 │
+   │                     ├─ task groups + Gantt   │                 │
+   │                     ├─ suggest PMs ─────────►│                 │
+   │◄── assigns PM ──────┤                        │                 │
+   │                     ├─ suggest tasks ───────►│                 │
+   │                     │                        ├─ edits project_doc
+   │                     │◄── re-evaluate Gantt ──┤                 │
+   │                     │                        ├─ creates task ──┤
+   │                     │◄─────────────────────  │  (= GitHub issue)
+   │                     ├─ task_progress_doc     │                 │
+   │                     │                        ├─ assigns ──────►│
+   │                     │                        │                 ├─ does the work
+   │                     │                        │                 ├─ sets status → Completed
+   │                     │◄──────────────────── status change ──────┤  (closes the issue)
+   │                     ├─ re-evaluate Gantt, notify PMs           │
+   │                     │                        │                 │
+   │                     ├─ weekly: task_progress_doc ×N → project_progress_doc
+   │◄── progress report ─┤                        │                 │
 ```
+
+Completion is **manual**: the person doing the task marks it complete. The AI plans,
+suggests and reports; it never decides that work is done (§7).
 
 ---
 
@@ -54,7 +57,7 @@
 3. **AI suggests people, it never assigns them.** Project Manager and assignee
    ranking produce candidate lists with reasoning. A human accepts.
 4. **Every AI write is attributed and reversible.** Record which job produced a
-   document version, a Gantt version, or a status change.
+   document version or a Gantt version. The AI never changes a task's status.
 5. **AI credentials and model come from `system_settings`** (Admin → Configuration)
    with `.env` as fallback. Never hardcode a model name at a call site.
 6. **Failures are visible.** A failed evaluation puts the project or task into a
@@ -114,7 +117,7 @@ Steps 7 and 8 — people suggestions:
 | Suggestion | Ranked on |
 |------------|-----------|
 | Project Manager (step 7) | Projects delivered, on-time delivery rate, average task completion rate across their projects |
-| Task assignee (step 8, and Stage 2) | Tasks completed, on-time rate, CI/CD first-pass rate, similarity of past task subject matter |
+| Task assignee (step 8, and Stage 2) | Tasks completed, on-time rate, similarity of past task subject matter |
 
 Both read `productivity_scores`, which is refreshed weekly (§8). Attendance is
 recorded in the system but is deliberately **not** a ranking input.
@@ -197,6 +200,58 @@ UI can show *why* the chart moved.
 Debounce: coalesce triggers for the same project inside a short window, so a bulk
 status update produces one regeneration rather than twenty.
 
+### 5.1 `chart_data` — the one shape every Gantt version has *(defined 2026-09-26, Phase 4)*
+
+Whatever writes a `gantt_charts` row — Stage 1 step 6, `reevaluate_gantt`, or a
+hand-written row — writes exactly this, and validates it first against
+`GanttChartData` in `app/schemas/gantt.py` (§2 rule 2). The renderer
+(`GanttChart.jsx`) reads nothing else: it never joins live task data, so what a
+version shows is what was true when it was generated.
+
+```json
+{
+  "schema": 1,
+  "range": { "start": "2026-09-01", "end": "2026-12-31" },
+  "bars": [
+    {
+      "task_group_id": 12,
+      "name": "Backend Foundation",
+      "sequence": 1,
+      "start": "2026-09-01",
+      "end": "2026-09-30",
+      "completion": 40.0,
+      "status": "In Progress",
+      "tasks": [
+        { "task_id": 31, "title": "Auth API", "status": "Completed",
+          "due": "2026-09-15", "assignee": "Alice" }
+      ]
+    }
+  ],
+  "dependencies": [ { "from": 12, "to": 14 } ],
+  "milestones":   [ { "name": "Project end", "date": "2026-12-31" } ]
+}
+```
+
+| Field | Rule |
+|-------|------|
+| `schema` | `1`. Bump it — and teach the renderer both — if the shape ever changes |
+| `range` | The timeline shown; `start ≤` every bar start and milestone, `end ≥` every bar end and milestone |
+| `bars[]` | One per **task group**, ordered by `sequence`. `start ≤ end`, both dates. `completion` 0–100. `status` is a task-group status (`Pending`, `In Progress`, `Completed`, `Blocked`) |
+| `bars[].tasks[]` | The group's tasks, drawn when a bar is expanded. `due` and `assignee` (a display name) may be `null`; a task has no start date, so it is drawn as a marker on `due`. Cancelled tasks are left out |
+| `dependencies[]` | Task-group ids: `to` cannot start before `from` ends. Both ids must be bars in this chart; no self-links |
+| `milestones[]` | Named dates. May be empty |
+
+**Deterministic builder** — `gantt_service.build_chart_data()` turns the current
+task groups and tasks into this shape without the AI: a group's bar is its
+`planned_start_date` → `planned_end_date`; a group missing either is laid after the
+previous bar (from the project's `start_date`, else today) for its
+`estimated_duration_days`, else 7 days. The project's `end_date`, if set, is a
+milestone. It carries no dependencies unless it is given them: `task_groups` has
+no dependency column, so Stage 1 step 6 passes the §3 step 5 `depends_on` pairs in
+(Phase 5 decides whether they also need a column, so `reevaluate_gantt` can reuse
+them). The AI's contribution is those pairs plus the dates and durations it writes
+into the task groups.
+
 ---
 
 ## 6. Stage 4 — Weekly progress roll-up
@@ -210,65 +265,44 @@ Both are committed to the repo; the DB stores their URLs.
 
 ---
 
-## 7. Stage 5 — CI/CD-driven completion
+## 7. Task status and completion — manual
 
-This is what makes completion machine-decided rather than self-declared.
+*(Changed 2026-09-26: CI/CD-driven, AI-resolved completion was removed from the
+design — `PLANNING.md` §4. There is no webhook, no `cicd_events` table and no
+resolver job.)*
+
+The person doing a task keeps its status current in TRACE, and marks it
+**Completed** when the work is done. No pipeline and no AI decides that.
 
 ```
-member pushes commit(s) referencing the GitHub issue id
+Member works on the task (commits may reference the issue, #N — GitHub links them)
         ↓
-GitHub Actions runs the project's CI/CD pipeline
+PATCH /api/v1/tasks/{id}/status  { "status": "Completed" }
         ↓
-on a successful deploy, the pipeline POSTs to TRACE
+completed_by = 'Assignee', completed_at set, the GitHub issue is closed
         ↓
-POST /api/v1/webhooks/cicd      (HMAC-signed with the configured secret)
-        ↓
-persist a cicd_events row  →  enqueue resolve_cicd_completion(event_id)
-        ↓
-LLM maps the push to task(s) — POSSIBLY MORE THAN ONE
-        ↓
-matched tasks → Completed, completed_by='AI/CICD', completed_at set
-        ↓
-notifications  +  reevaluate_gantt(reason='task_status_change')
+task-group roll-up  +  notifications  +  reevaluate_gantt(reason='task_status_change')
 ```
 
-**Convention that makes this work:** a Member should always push with the GitHub
-issue id in the commit message. The resolver can fall back to diff analysis, but
-the issue reference is what makes the mapping reliable. Surface this convention in
-the task detail UI.
+Setting any open status again reopens the issue and clears `completed_by` /
+`completed_at`.
 
-**Job `resolve_cicd_completion(event_id)`**
-```json
-{
-  "completed_tasks": [
-    { "task_id": 1, "confidence": 0.0, "reasoning": "string",
-      "evidence": ["commit sha", "issue ref"] }
-  ],
-  "partial_tasks": [ { "task_id": 2, "reasoning": "string" } ]
-}
-```
+### Status authority
 
-- `completed_tasks` above the confidence threshold → `Completed`.
-- `partial_tasks` and low-confidence matches → `In Review`, surfaced to the Project
-  Manager rather than closed silently.
-- Only events with `pipeline_status == 'success'` may complete anything.
-- **A single push may complete several tasks.** Handle the list, never just the
-  first match.
+Enforced in the API layer (`ProjectAccess.may_set_status`), not only in the UI.
+Responses carry `allowed_statuses`, derived from the same check.
 
-### Completion authority
+| Actor | May set |
+|-------|---------|
+| The task's **assignee** | `Pending`, `In Progress`, `In Review`, `Blocked`, **`Completed`** → `completed_by='Assignee'` |
+| The project's **Project Manager** | Any status except `Overdue`, on any task in the project → `completed_by='Project Manager'` |
+| Another Member of the project | Nothing — 403 |
+| Manager / Admin | Nothing. They observe. (Admin retains raw Control Panel CRUD as an escape hatch) |
+| The system | `Overdue` only, from the nightly sweep (§8) |
 
-Enforce this in the API layer, not only in the UI.
-
-| Actor | May set a task to `Completed`? |
-|-------|-------------------------------|
-| Member | **No — ever.** `PATCH /tasks/{id}/status` with `Completed` returns 403 |
-| AI via the CI/CD webhook | Yes → `completed_by='AI/CICD'` |
-| Project Manager | Yes → `completed_by='Project Manager'` |
-| Manager / Admin | No. They observe. (Admin retains raw Control Panel CRUD as an escape hatch) |
-
-> Building the CI/CD pipeline is itself a project task, and by definition cannot be
-> closed by CI/CD. That is precisely why the Project Manager override exists — it is
-> not a convenience, it is a bootstrap requirement.
+`Cancelled` stays with the Project Manager: dropping a task is a scope decision,
+not a report of work done. `In Review` is an ordinary hand-off status — the
+assignee's way of saying "done, please look" — and carries no automation.
 
 ---
 
@@ -292,7 +326,7 @@ Retire from the existing schedule: `compute_task_health_and_escalate` (hourly) a
 |-------|-----------|---------|
 | Task assigned | Assignee | In-app + email |
 | Task due soon / overdue | Assignee + the project's Project Managers | In-app + email |
-| Task completed by the system | Assignee + the project's Project Managers | In-app + email |
+| Task completed | The project's Project Managers, and the assignee if someone else completed it | In-app + email |
 | Discussion reply | Other participants in the thread | In-app |
 | Project evaluation finished (or failed) | The Manager who triggered it | In-app + email |
 

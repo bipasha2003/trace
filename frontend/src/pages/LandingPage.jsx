@@ -44,8 +44,8 @@ const HOW_IT_WORKS = [
   {
     step: '03',
     icon: GitBranch,
-    title: 'CI/CD verifies delivery',
-    body: 'Every push is read by the AI. When evidence is strong enough the task closes automatically. No self-declared "done".',
+    title: 'The team delivers',
+    body: 'Every task is a GitHub issue. Whoever does the work updates its status; completing it closes the issue and moves the Gantt.',
   },
 ]
 
@@ -62,13 +62,13 @@ const FEATURES = [
   },
   {
     icon: CheckCircle2,
-    title: 'CI/CD-Driven Completion',
-    body: 'Tasks close when evidence arrives — commit hashes, pipeline results, and AI reasoning stored for audit.',
+    title: 'Tasks Are GitHub Issues',
+    body: 'Each project gets its own public repository. Creating a task opens an issue; completing it closes the issue.',
   },
   {
     icon: Users,
     title: 'AI-Ranked Assignee Suggestions',
-    body: 'The AI scores employees on task throughput, on-time rate, and CI/CD pass rate — and shows its reasoning.',
+    body: 'The AI scores employees on task throughput, on-time rate, and past subject matter — and shows its reasoning.',
   },
   {
     icon: BarChart3,
@@ -82,8 +82,8 @@ const FEATURES = [
   },
   {
     icon: ShieldCheck,
-    title: 'Hardened Completion Authority',
-    body: 'A Member cannot mark their own task complete. Authority flows only from CI/CD or the Project Manager.',
+    title: 'Server-Enforced Authority',
+    body: 'Only a task’s assignee or its Project Manager can change its status — checked by the API, not just hidden in the UI.',
   },
   {
     icon: Cpu,
@@ -241,7 +241,7 @@ export default function LandingPage() {
           <div className="text-center space-y-3 mb-16">
             <h2 className="text-3xl font-bold tracking-tight">Everything in one platform</h2>
             <p className="text-muted-foreground">
-              From project inception to CI/CD-verified completion.
+              From raw requirements to delivered, tracked work.
             </p>
           </div>
 

@@ -2,7 +2,7 @@
  * TRACE — Admin → Configuration
  * Runtime settings in system_settings; a saved value wins over .env.
  * GitHub is built (Phase 3a, CORE.md §4.1) — no project or task can be created without it.
- * Mail / AI / CI-CD sections arrive in Phase 8.
+ * Mail and AI sections arrive in Phase 8.
  */
 
 import { useCallback, useEffect, useState } from 'react'
@@ -21,7 +21,6 @@ import { apiError } from '@/lib/project'
 const LATER_SECTIONS = [
   { label: 'Mail / SMTP', description: 'Outgoing mail server — host, port, username, password.' },
   { label: 'AI Provider', description: 'OpenAI-compatible API key, base URL and model used by every AI job.' },
-  { label: 'CI/CD Webhook', description: 'HMAC secret that authenticates inbound pipeline events.' },
 ]
 
 const TOKEN_SOURCE = { database: 'Set here', env: 'Set in .env' }
@@ -193,7 +192,7 @@ export default function ConfigurationPage() {
 
       <GitHubSection key={key} />
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2">
         {LATER_SECTIONS.map((section) => (
           <Card key={section.label}>
             <CardHeader>

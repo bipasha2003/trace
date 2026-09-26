@@ -65,7 +65,7 @@ class Task(BaseModelMixin, Base):
     )
     completed_by: Mapped[str | None] = mapped_column(
         String(20), nullable=True
-    )  # 'AI/CICD' | 'Project Manager'
+    )  # 'Assignee' | 'Project Manager'
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

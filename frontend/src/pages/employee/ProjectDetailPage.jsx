@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ChartGantt, FileText, Network, RefreshCw } from 'lucide-react'
+import { FileText, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -16,6 +16,8 @@ import ProjectOverview from '@/components/project/ProjectOverview'
 import TaskBoard from '@/components/project/TaskBoard'
 import TeamPanel from '@/components/project/TeamPanel'
 import NotYetAvailable from '@/components/project/NotYetAvailable'
+import ProjectTreeGraph from '@/components/ProjectTreeGraph'
+import GanttChart from '@/components/GanttChart'
 import { ProjectStatusBadge, RoleBadge } from '@/components/project/status'
 import { apiError } from '@/lib/project'
 
@@ -42,16 +44,8 @@ export default function EmployeeProjectDetailPage() {
   }
 
   const isPM = project.my_role === 'Project Manager'
-  const tree = (
-    <NotYetAvailable icon={Network} title="Project tree">
-      The graph of task groups, tasks and assignees is not available yet.
-    </NotYetAvailable>
-  )
-  const gantt = (
-    <NotYetAvailable icon={ChartGantt} title="Gantt chart">
-      The Gantt chart is generated when the project is evaluated, and is not available yet.
-    </NotYetAvailable>
-  )
+  const tree = <ProjectTreeGraph projectId={project.id} taskPath={taskPath} />
+  const gantt = <GanttChart projectId={project.id} />
 
   return (
     <div id="employee-project-page" className="space-y-6 max-w-[1400px]">
