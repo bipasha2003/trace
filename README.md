@@ -44,7 +44,7 @@ pip install -r requirements.txt   # settings come from the root .env
 alembic upgrade head          # the app never creates tables itself
 uvicorn app.main:app --reload --port 8000
 celery -A app.celery_app worker --loglevel=info   # every AI action runs here
-celery -A app.celery_app beat --loglevel=info     # nightly overdue sweep, weekly progress docs
+celery -A app.celery_app beat --loglevel=info     # overdue sweep, due reminders, weekly progress docs
 
 # Frontend
 cd frontend
@@ -149,6 +149,17 @@ purpose — no Admin screen changes them. Every AI action
 runs on the **Celery worker** (`./start.sh start` runs it); without one, *Evaluate
 project* stays at "Evaluating…". The generated documents are committed to the
 project's public repository under `docs/`.
+
+### Notifications and discussions
+
+Assignments, tasks due tomorrow, overdue tasks, completions and finished
+evaluations reach the people involved through the bell in the header **and** by
+email (Mailpit locally: http://localhost:8025, links point at `http://localhost:5173`;
+in production at `https://PRODUCTION_URL`). Each task has a discussion for its
+assignee, its assigner, the Project Managers and the project's Manager. Both update
+live over one WebSocket (`/api/v1/ws`), which the API relays from Redis — so the bell
+and the thread refresh without reloading, including for events a Celery job raised.
+The due reminders run daily at 08:00 and the overdue sweep at 23:00 (Celery beat).
 
 ---
 

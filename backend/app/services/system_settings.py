@@ -2,8 +2,9 @@
 TRACE - Runtime settings resolution
 
 Admin → Configuration writes `system_settings` rows; a value there wins over the
-`.env` fallback (PROJECT.md §11.8). Every consumer of mail / AI / GitHub
-credentials resolves them through `resolve_setting`, never straight from Settings.
+`.env` fallback (PROJECT.md §11.8). Every consumer of mail / GitHub credentials
+resolves them through `resolve_setting`, never straight from Settings. The AI is
+not here: its configuration is fixed in `.env` (ai_service).
 
 Rows with `is_secret` are Fernet-encrypted at rest with SETTINGS_ENCRYPTION_KEY
 and decrypted only here, in `resolve_setting`. No API returns a secret — callers
@@ -25,13 +26,15 @@ ENV_FALLBACKS = {
     ("github", "api_url"): "GITHUB_API_URL",
     ("github", "committer_name"): "GITHUB_COMMITTER_NAME",
     ("github", "committer_email"): "GITHUB_COMMITTER_EMAIL",
-    ("ai", "api_key"): "OPENAI_API_KEY",
-    ("ai", "base_url"): "OPENAI_BASE_URL",
-    ("ai", "model"): "OPENAI_MODEL",
+    ("mail", "host"): "SMTP_HOST",
+    ("mail", "port"): "SMTP_PORT",
+    ("mail", "from_address"): "SMTP_FROM",
+    # mail.username / password / security have no .env fallback (Mailpit needs none)
 }
 
 # Settings that are always stored encrypted and never returned by any API
-SECRET_SETTINGS = {("github", "token"), ("ai", "api_key")}
+SECRET_SETTINGS = {("github", "token"), ("mail", "password")}
+# The LLM configuration is deliberately absent: it is fixed in .env (ai_service).
 
 
 class EncryptionKeyMissing(TraceException):
@@ -79,7 +82,8 @@ async def _row(db: AsyncSession, category: str, key: str) -> SystemSetting | Non
 
 def _env_value(category: str, key: str) -> str:
     attr = ENV_FALLBACKS.get((category, key))
-    return getattr(get_settings(), attr, "") if attr else ""
+    value = getattr(get_settings(), attr, "") if attr else ""
+    return "" if value is None else str(value)
 
 
 async def resolve_setting(db: AsyncSession, category: str, key: str) -> str:

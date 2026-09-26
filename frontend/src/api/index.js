@@ -5,12 +5,10 @@
 
 export { default as api } from './client'
 export { authApi } from './auth'
-export { employeesApi } from './employees'
-export { attendanceApi } from './attendance'
 export { tasksApi } from './tasks'
 export { projectsApi } from './projects'
-export { productivityApi } from './productivity'
-export { hrmsApi } from './hrms'
 export { adminApi } from './admin'
 export { settingsApi } from './settings'
+export { notificationsApi } from './notifications'
+export { workforceApi } from './workforce'
 

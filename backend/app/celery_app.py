@@ -23,6 +23,7 @@ celery_app.conf.update(
     timezone="Asia/Kolkata",
     enable_utc=True,
     task_track_started=True,
+    result_extended=True,  # store the task name and date with each result — Admin → Monitor lists them
     task_acks_late=True,
     worker_prefetch_multiplier=1,
     imports=["app.tasks"],
@@ -35,6 +36,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.mark_overdue_tasks",
         "schedule": crontab(hour=23, minute=0),
     },
+    # Due-tomorrow notifications (CORE.md §8) — every morning at 8 AM
+    "task-due-reminders-daily": {
+        "task": "app.tasks.task_due_reminders",
+        "schedule": crontab(hour=8, minute=0),
+    },
     # AI progress roll-up for every Active project (CORE.md §6) — Mondays at 7 AM
     "project-progress-docs-weekly": {
         "task": "app.tasks.update_project_progress_docs",
@@ -44,11 +50,6 @@ celery_app.conf.beat_schedule = {
     "compute-weekly-scores": {
         "task": "app.tasks.compute_all_weekly_scores",
         "schedule": crontab(day_of_week="sunday", hour=23, minute=30),
-    },
-    # Generate & email weekly report — runs every Monday at 8 AM
-    "weekly-report-email": {
-        "task": "app.tasks.send_weekly_report",
-        "schedule": crontab(day_of_week="monday", hour=8, minute=0),
     },
 }
 

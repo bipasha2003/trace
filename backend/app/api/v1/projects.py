@@ -6,9 +6,9 @@ role from app.core.project_access. PROJECT.md §6–7, §11; CORE.md §4, §7.
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, Depends, File, UploadFile, status
+from fastapi import APIRouter, Depends, File, Response, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,7 +28,7 @@ from app.schemas.project import (
     TaskGroupCreate, TaskGroupResponse, TaskGroupUpdate, TaskMutationResponse, TaskResponse,
 )
 from app.schemas.gantt import GanttResponse, GanttVersionBrief, ProjectTree
-from app.services import ai_jobs, ai_service, gantt_service, jobs
+from app.services import ai_jobs, ai_service, gantt_service, jobs, project_report
 from app.services import project_service as svc
 from app.services.extraction import (
     MAX_SOURCE_FILE_BYTES, UnsupportedFile, extension_of, extract_text,
@@ -93,6 +93,28 @@ async def recent_activity(
                     "assigned_to": svc.person(t.assigned_to_user),
                     "updated_at": t.updated_at or t.created_at})
     return out
+
+
+@router.get("/report", summary="Download the project → task group → task report for a date range (CSV)",
+            response_class=Response, responses={200: {"content": {"text/csv": {}}}})
+async def download_report(
+    start: date,
+    end: date,
+    project_id: int | None = None,
+    user: User = Depends(require_roles(RoleEnum.MANAGER, RoleEnum.EMPLOYEE)),
+    db: AsyncSession = Depends(get_db),
+):
+    """PLANNING.md Q7: from the Manager and Employee dashboards; every project the caller sees, or one."""
+    if end < start:
+        raise TraceException(422, "The end date is before the start date")
+    if project_id is not None:
+        projects = [(await resolve_project_access(db, user, project_id)).project]
+    else:
+        projects, _ = await svc.visible_projects(db, user)
+    body = project_report.to_csv(await project_report.report_rows(db, projects, start, end))
+    name = f"trace-report-{start.isoformat()}-to-{end.isoformat()}.csv"
+    return Response(body, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @router.get("/{project_id}", response_model=ProjectDetail)
@@ -450,7 +472,7 @@ async def list_gantt_versions(access: ProjectAccess = Depends(project_access), d
 # ══════════════════════════════════════════════════════════════════
 
 async def _require_ai(db: AsyncSession) -> None:
-    if not await ai_service.ai_configured(db):
+    if not ai_service.ai_configured():
         raise ai_service.AINotConfigured()
 
 

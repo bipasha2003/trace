@@ -417,12 +417,18 @@ Retire from the existing schedule: `compute_task_health_and_escalate` (hourly) a
 *As built (Phase 5):* `mark_overdue_tasks` replaced the pre-re-spec
 `mark_delayed_tasks` (which wrote a `Delayed` status that no longer exists). It
 flips open past-due tasks (`Pending`, `In Progress`, `In Review`, `Blocked`) to
-`Overdue` and requests a Gantt re-evaluation per affected project; its
-notifications arrive with Phase 7. `compute_all_weekly_scores` is the weekly
+`Overdue` and requests a Gantt re-evaluation per affected project; since Phase 7 it
+also notifies each task's assignee and Project Managers. `compute_all_weekly_scores` is the weekly
 scoring job, re-based on task signals: `task_score` = completed ÷ assigned tasks due
 that week, `deadline_score` = completed on or before the due date ÷ completed,
 `final_score` = the mean of the two. `att_score` and `active_time_score` are left
-empty. `task_due_reminders` is Phase 7.
+empty.
+
+*As built (Phase 7):* `task_due_reminders` runs daily at 08:00 and notifies about
+open tasks due **tomorrow** — one reminder per task, because the date only matches
+once. Beat times: overdue sweep 23:00 nightly, reminders 08:00 daily, progress docs
+Mondays 07:00, scores Sundays 23:30. The hourly health job and nightly overallocation
+job are not scheduled; `POST /tasks/compute-health` recomputes health on demand.
 
 ---
 
@@ -438,6 +444,17 @@ empty. `task_due_reminders` is Phase 7.
 
 Email goes through the existing Mailpit/SMTP Celery task. In-app notifications are
 `notifications` rows, delivered over the existing WebSocket channel.
+
+*As built (Phase 7):* `app/services/notification_service.py`. `notify()` writes the
+rows (never to the person who acted — a PM completing their own assignment, or
+assigning themselves, notifies nobody); after the commit `deliver()` publishes a
+live event and enqueues `send_mail_task` per email. "Due soon" means due tomorrow
+(§8). "Other participants in the thread" = everyone who has written on the task's
+discussion plus its assignee and assigner. The live channel is `/api/v1/ws?token=`:
+writers — API or worker — publish `{users, event}` on the Redis channel
+`trace:events` (`app/services/realtime.py`), and each API process relays the event to
+those users' sockets. Events carry no content (`notification`, or `discussion` with a
+`task_id`); the browser refetches through the authorised REST routes.
 
 ---
 

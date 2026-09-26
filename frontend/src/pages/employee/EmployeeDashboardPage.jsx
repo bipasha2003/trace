@@ -16,6 +16,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import { useAuth } from '@/contexts/AuthContext'
 import { projectsApi } from '@/api/projects'
+import ReportDownload from '@/components/project/ReportDownload'
 import { tasksApi } from '@/api/tasks'
 import { RoleBadge, TaskStatusBadge } from '@/components/project/status'
 import { apiError, formatDate, isOverdue } from '@/lib/project'
@@ -58,7 +59,10 @@ export default function EmployeeDashboardPage() {
           <h1 className="text-2xl font-bold tracking-tight">Hello, {user?.name || 'there'}</h1>
           <p className="text-sm text-muted-foreground">Your projects and open tasks</p>
         </div>
-        <Button variant="outline" size="icon" onClick={refresh} aria-label="Refresh"><RefreshCw /></Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="icon" onClick={refresh} aria-label="Refresh"><RefreshCw /></Button>
+          <ReportDownload projects={projects || []} />
+        </div>
       </div>
 
       {overdue.length > 0 && (

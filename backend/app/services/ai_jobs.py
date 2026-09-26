@@ -25,6 +25,7 @@ from app.schemas.ai import (
     TaskGroupPlanOut, TaskProgressPlanOut, TaskSuggestionsOut,
 )
 from app.services import gantt_service
+from app.services import notification_service as notifications
 from app.services.ai_service import AINotConfigured, complete
 from app.services.github_service import GitHubClient, GitHubNotConfigured
 from app.services.project_service import active_employees, person
@@ -175,7 +176,12 @@ async def run_evaluate_project(db: AsyncSession, project_id: int, *, job_id: str
         project.status = "Active"
         project.last_evaluated_at = now
         set_ai_error(project, "evaluate_project", None)
+        outbox = await notifications.notify(  # CORE.md §9 — the Manager who pressed Evaluate
+            db, [project.created_by_user_id], "project_evaluated", f"Evaluated: {project.name}",
+            f"{project.name} has its project document, {len(groups)} task groups and a Gantt chart.",
+            project_id=project.id)
         await db.commit()
+        notifications.deliver(outbox)
         return {"status": "success", "task_groups": len(groups)}
     except Exception as exc:
         await db.rollback()
@@ -184,7 +190,11 @@ async def run_evaluate_project(db: AsyncSession, project_id: int, *, job_id: str
         project.status = "Active" if project.last_evaluated_at else "Draft"
         message = f"Failed while {step}: {describe(exc)}"
         set_ai_error(project, "evaluate_project", message)
+        outbox = await notifications.notify(
+            db, [project.created_by_user_id], "project_evaluated", f"Evaluation failed: {project.name}",
+            message, project_id=project.id)
         await db.commit()
+        notifications.deliver(outbox)
         return {"status": "failed", "error": message}
 
 

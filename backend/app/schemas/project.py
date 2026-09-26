@@ -6,7 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.services.github_service import REPO_PATTERN
 
@@ -225,6 +225,7 @@ class TaskResponse(BaseModel):
     updated_at: datetime | None
     # What the caller may do — so the UI never has to re-derive authority
     can_edit: bool = False
+    can_discuss: bool = False
     allowed_statuses: list[str] = []
 
 
@@ -276,3 +277,38 @@ class DocumentSaved(DocumentResponse):
 class AssigneeSuggestionRequest(BaseModel):
     title: str = Field(..., min_length=2, max_length=255)
     description: str | None = None
+
+
+# ── Discussions and notifications (Phase 7) ─────────────────────
+
+class DiscussionCreate(BaseModel):
+    message: str = Field(min_length=1, max_length=5000)
+    parent_id: int | None = None
+
+
+class DiscussionResponse(BaseModel):
+    id: int
+    task_id: int
+    parent_id: int | None
+    message: str
+    author: PersonBrief | None
+    created_at: datetime | None
+
+
+class NotificationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    type: str
+    title: str
+    body: str | None
+    link: str | None
+    is_read: bool
+    related_task_id: int | None
+    related_project_id: int | None
+    created_at: datetime | None
+
+
+class NotificationList(BaseModel):
+    items: list[NotificationResponse]
+    unread: int

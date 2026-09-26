@@ -1,9 +1,15 @@
 """
-TRACE - Admin → Configuration API (DEVELOPMENT.md Phase 3a; the other sections are Phase 8)
+TRACE - Admin → Configuration API (DEVELOPMENT.md Phase 3a, Phase 8)
 
 GitHub: the company organization, its token and the commit identity (CORE.md §4.1).
-The token is write-only — responses say only whether one is set, and where from.
+Mail: the outgoing SMTP server every notification email goes through.
+Secrets (github.token, mail.password) are write-only — responses say only whether
+one is set, and where from. There is no AI section: the LLM configuration is fixed
+in .env (user decision 2026-09-26).
 """
+
+import asyncio
+from typing import Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field, field_validator
@@ -11,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.permissions import RoleEnum, require_roles
 from app.database import get_db
+from app.services import mail_service
 from app.services.github_service import (
     OWNER_PATTERN, GitHubClient, GitHubError, get_github_client,
 )
@@ -120,3 +127,67 @@ async def test_github_settings(
     else:
         checks.append(ConnectionCheck(name="Organization", ok=False, detail="Not checked — the token failed"))
     return {"ok": all(c.ok for c in checks), "checks": checks}
+
+
+# ── Mail ─────────────────────────────────────────────────────────
+
+MAIL_FIELDS = ("host", "port", "from_address", "username", "security")
+
+
+class MailSettings(BaseModel):
+    host: str
+    port: str
+    from_address: str
+    username: str
+    security: str
+    password_set: bool
+    password_source: str | None
+
+
+class MailSettingsUpdate(BaseModel):
+    """Omitted fields are left alone. `password`: a new value replaces it, '' clears it."""
+    host: str | None = Field(None, max_length=255)
+    port: int | None = Field(None, ge=1, le=65535)
+    from_address: str | None = Field(None, max_length=255)
+    username: str | None = Field(None, max_length=255)
+    password: str | None = Field(None, max_length=500)
+    security: Literal["none", "starttls", "ssl"] | None = None
+
+    @field_validator("from_address")
+    @classmethod
+    def _from(cls, value: str | None) -> str | None:
+        if value in (None, ""):
+            return value
+        if "@" not in value:
+            raise ValueError("must be an email address")
+        return value.strip()
+
+
+async def _mail_settings(db: AsyncSession) -> dict:
+    values = {f: await resolve_setting(db, "mail", f) for f in MAIL_FIELDS}
+    values["security"] = values["security"] or "none"
+    source = await setting_source(db, "mail", "password")
+    return {**values, "password_set": source is not None, "password_source": source}
+
+
+@router.get("/mail", response_model=MailSettings, summary="Mail settings (password never returned)")
+async def get_mail_settings(db: AsyncSession = Depends(get_db)):
+    return await _mail_settings(db)
+
+
+@router.put("/mail", response_model=MailSettings, summary="Save mail settings (password is write-only)")
+async def put_mail_settings(data: MailSettingsUpdate, db: AsyncSession = Depends(get_db)):
+    for field, value in data.model_dump(exclude_unset=True).items():
+        if field == "password" and value is None:
+            continue
+        await store_setting(db, "mail", field, str(value).strip() if value is not None else None)
+    await db.commit()
+    return await _mail_settings(db)
+
+
+@router.post("/mail/test", response_model=GitHubTestResult, summary="Test the saved mail server")
+async def test_mail_settings(db: AsyncSession = Depends(get_db)):
+    """Connects (and logs in, if a username is set) — sends nothing."""
+    config = await mail_service.mail_config(db)
+    checks = await asyncio.to_thread(mail_service.check, config)
+    return {"ok": all(c["ok"] for c in checks), "checks": checks}

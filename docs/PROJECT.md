@@ -360,7 +360,11 @@ History is kept; the newest version is live.
 | `message` | `Text` | |
 
 Visible to: the task's assignee, its assigner, the project's Project Managers, and
-the owning Manager.
+the owning Manager (`ProjectAccess.may_discuss`; the task response carries
+`can_discuss`). Not to the Admin or to other Members.
+
+*As built (Phase 7):* one level of threading — a reply to a reply joins its root
+message's thread. Messages cannot be edited or deleted.
 
 ### 11.7 `notifications`
 
@@ -372,6 +376,12 @@ the owning Manager.
 | `link` | `String(500)` | Deep link into the right panel |
 | `is_read` | `Boolean` | |
 | `related_task_id` / `related_project_id` | FK, nullable | |
+
+*As built (Phase 7):* written only through `notification_service.notify()`, which
+never notifies the person who acted; after the commit, `deliver()` pushes a live
+event and queues the email. `link` points into the recipient's own panel —
+`/employee/tasks/{id}` or `/manager/tasks/{id}`, `/manager/projects/{id}` for an
+evaluation. Who receives what: [`CORE.md`](CORE.md) §9.
 
 ### 11.8 `system_settings`
 
@@ -507,6 +517,7 @@ Stack constraints (shadcn/ui, Tailwind v4 tokens, `lucide-react` only) are in
 /manager                  Combined dashboard ("All" selected)
 /manager/projects/new     Create project
 /manager/projects/:id     Single project detail
+/manager/tasks/:taskId    Task detail (read-only) + discussion — the same page as the Employee's
 /manager/settings         Own profile
 
 /employee                 Combined dashboard ("All" selected)
@@ -636,6 +647,13 @@ thread. The status buttons are exactly the server's `allowed_statuses`; anyone w
 is neither the assignee nor the Project Manager sees none
 ([`CORE.md`](CORE.md) §7).
 
+*As built (Phase 7):* the discussion card shows only when `can_discuss`, and reloads
+live when someone writes. The owning Manager opens the same page at
+`/manager/tasks/:id` from their task board or tree (read-only apart from the
+discussion). Every panel's header has the **notification bell** — unread count, the
+latest 20, click to open the deep link, *Mark all read*; a new notification also
+pops a toast with an *Open* action.
+
 ## 21. Project tree graph
 
 ```
@@ -748,7 +766,7 @@ chart can press **Re-plan now** to draw them.
 | GitHub issue assignment to Member | ✅ | Via `users.github_username` (Q9, self-service in Profile); missing username → unassigned issue + warning |
 | `task_progress_doc` per task | ✅ | Phase 5: written by the AI after task creation; rendered on the task page |
 | Status authority enforcement | ✅ | `ProjectAccess.may_set_status`: the assignee sets their own task's status, **Completed included** (`completed_by='Assignee'`); the PM any status; others 403. Reworked 2026-09-26 — Members were previously refused Completed |
-| Per-task discussion | ✅ | `task_discussions` table created Phase 1 |
+| Per-task discussion | ✅ | Phase 7. `GET/POST /tasks/{id}/discussions`; assignee, assigner, PMs, owning Manager; one level of replies; live reload |
 | Infinite tree, `Team Lead`, rotating roles | ❌ | Flattened to three levels |
 | Task board grouped by task group | ✅ | Replaces the old Kanban (`TasksPage.jsx` deleted) |
 | Project group chat + tagging rules | ❌ | Replaced |
@@ -772,9 +790,9 @@ chart can press **Re-plan now** to draw them.
 ### Notifications
 | Feature | Status | Notes |
 |---------|--------|-------|
-| `notifications` table + in-app centre | 🔲 | Table created Phase 1; API + bell in Phase 7 |
-| Assignment / due / completion notifications | 🔲 | In-app + Mailpit |
-| Discussion reply notification | 🔲 | |
+| `notifications` table + in-app centre | ✅ | Phase 7. `/notifications` API, header bell with unread count and deep links, live over `/api/v1/ws` |
+| Assignment / due / completion notifications | ✅ | Phase 7. In-app + Mailpit (`send_mail_task`); due = the daily `task_due_reminders` (due tomorrow) and the nightly overdue sweep; evaluation finished / failed to the owner |
+| Discussion reply notification | ✅ | Phase 7. In-app only, to the other participants |
 
 ### Admin panel
 | Feature | Status | Notes |
@@ -804,7 +822,7 @@ chart can press **Re-plan now** to draw them.
 | Celery worker + beat | ✅ | Schedule re-pointed, [`CORE.md`](CORE.md) §8 |
 | Alembic migrations, `./start.sh` | ✅ | Alembic is the only schema owner; an empty DB reaches head (tested). `start` migrates first |
 | Backend test suite | ✅ | Own `trace_test` DB built by migrations; route-guard audit + role matrix; migration-chain test |
-| WebSocket endpoint | ✅ | Re-point from group chat to notifications/discussion |
+| WebSocket endpoint | ✅ | Phase 7: `/api/v1/ws?token=` — per-user "refetch" events relayed through Redis pub/sub (`app/services/realtime.py`); the old `/services/ws/chat` group chat is gone |
 | GitHub API integration | ✅ | `github_service.py`: repo create, collaborator add / remove (+ invitation withdrawal), token and organization checks, issue create / assign / open-close, file commit |
 | CI/CD receiver webhook (HMAC) | ❌ | Removed with CI/CD completion (2026-09-26) |
 | Single root `.env` | ✅ | The only env file; backend derives DB / Redis / MinIO / SMTP settings from the Compose keys |

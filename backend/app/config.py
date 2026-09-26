@@ -149,6 +149,13 @@ class Settings(BaseSettings):
         return self.PRODUCTION_URL.strip().removeprefix("https://").removeprefix("http://").rstrip("/")
 
     @property
+    def app_url(self) -> str:
+        """Where people open TRACE — the base of links in notification emails."""
+        if self.is_production and self.production_domain:
+            return f"https://{self.production_domain}"
+        return "http://localhost:5173"
+
+    @property
     def cors_origins(self) -> list[str]:
         if self.is_production:
             domain = self.production_domain

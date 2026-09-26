@@ -13,6 +13,10 @@ export const projectsApi = {
   update: (id, data) => api.patch(`/projects/${id}`, data),
   remove: (id) => api.delete(`/projects/${id}`),
   activity: (limit = 15) => api.get('/projects/activity', { params: { limit } }),
+  /** CSV of project → group → task for a date range (PLANNING.md Q7); projectId optional */
+  report: (start, end, projectId = null) => api.get('/projects/report', {
+    params: { start, end, ...(projectId ? { project_id: projectId } : {}) }, responseType: 'blob',
+  }),
 
   /** files: File[] — one multipart request; the response lists uploaded and rejected files */
   uploadSourceFiles: (id, files) => {

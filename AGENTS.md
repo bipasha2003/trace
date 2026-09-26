@@ -96,7 +96,7 @@ A task is not complete until the docs describe what the code now does.
 
 Base URL `http://localhost:8000/api/v1`, proxied by Vite.
 
-### Built (Phases 3, 3a, 4, 5)
+### Built (Phases 3, 3a, 4, 5, 7)
 
 Platform role on the route, then the caller's project role from
 `app/core/project_access.py` — never re-derived inline.
@@ -144,6 +144,13 @@ POST   /projects/{id}/progress-report        rewrite progress doc + report now �
 GET    /projects/{id}/documents/{kind}       initial|doc|progress|report → { url, content } from the repo
 PUT    /projects/{id}/documents/doc          save project_doc (PM) → { changed }; a change re-plans the Gantt
 GET    /tasks/{id}/progress-doc              the task's plan + checklist → { url, content }
+GET|POST /tasks/{id}/discussions             thread; assignee, assigner, PMs, owning Manager (else 403)
+GET    /notifications                        mine, newest first → { items, unread } (?unread_only, ?limit)
+GET    /notifications/unread-count           { unread }
+PATCH  /notifications/{id}/read              mine only (else 404)
+POST   /notifications/read-all               { updated }
+WS     /ws?token=<access token>              live "refetch" events: notification · discussion {task_id}
+GET    /services/ws/status                   sockets open on this API process (Admin)
 ```
 
 Every `{ job_id }` is polled at `GET /services/task/{job_id}/result`; for the
@@ -153,8 +160,6 @@ suggestion routes that result *is* the answer (nothing is stored).
 
 | Module | Prefix | Purpose |
 |--------|--------|---------|
-| Discussions | `/tasks/{id}/discussions` | Per-task threads |
-| Notifications | `/notifications` | List, mark read, unread count |
 | Settings | `/admin/settings/mail` | The Mail Configuration section + connection test (GitHub is built). **No `/admin/settings/ai`** — the LLM configuration is fixed in `.env` |
 | Reports | `/projects/report` (name to be decided) | Dashboard download: project → group → task tree for a date range (PLANNING.md Q7). No Admin → Reports page |
 
@@ -176,7 +181,7 @@ suggestion routes that result *is* the answer (nothing is stored).
 |----------|-----|
 | `/attendance` clock-in / clock-out / geo-fence | No employee HR self-service. The **read + CRUD** endpoints stay |
 | `/master/roles`, `/master/menus`, `/master/menu-permissions` | Dynamic roles and matrix removed |
-| `/tasks/groups/*` | Group chat replaced by discussions |
+| `/tasks/groups/*`, `/services/ws/chat` | Group chat replaced by discussions (the chat socket went in Phase 7) |
 | `/tasks/tree/hierarchy`, `/tasks/{id}/evaluate-tree` | Infinite tree removed |
 | `/tasks/disputes*`, `/tasks/overallocations` | Deferred |
 | `/webhooks/cicd` | Never built — CI/CD-driven completion was removed from the design (2026-09-26) |
@@ -196,20 +201,21 @@ frontend/src/
     ui/                    ← shadcn-generated, NEVER hand-edit (Base UI: `render`, not `asChild`)
     ProjectSelector.jsx    ← topbar selector; the URL is the selected project
     project/               ← ProjectOverview · EvaluationCard · TaskBoard · TeamPanel · PeopleSuggestions ·
-                              ProgressReport · ProjectDocEditor · status badges · NotYetAvailable
+                              ProgressReport · ProjectDocEditor · TaskDiscussion · status badges · NotYetAvailable
     Markdown.jsx           ← react-markdown + remark-gfm, token-styled; every generated document
     ProjectTreeGraph.jsx   ← @xyflow/react, base.css only; nodes styled with tokens
     GanttChart.jsx         ← hand-built (divs + SVG), renders chart_data only
-    NotificationBell.jsx
+    NotificationBell.jsx   ← header bell: unread count, latest 20, deep links; live via LiveContext
     ServiceMonitor.jsx
   pages/
     LandingPage.jsx · LoginPage.jsx · ForbiddenPage.jsx
     admin/    ControlPanelPage · WorkforcePage · MonitorPage · ConfigurationPage · ReportsPage
     manager/  ManagerDashboardPage · ProjectCreatePage · ProjectDetailPage
-    employee/ EmployeeDashboardPage · ProjectDetailPage · TaskDetailPage
+    employee/ EmployeeDashboardPage · ProjectDetailPage · TaskDetailPage (also /manager/tasks/:id)
   contexts/
     AuthContext.jsx        ← JWT + platform role
     ThemeContext.jsx
+    LiveContext.jsx        ← the one WebSocket; useLiveEvents(handler) — events say "refetch", never carry data
   lib/project.js           ← apiError, formatDate, isOverdue, statusTone (status → token colour) …
   lib/jobs.js              ← waitForJob(job_id) — the enqueue-and-poll loop for every AI action
   api/                     ← one module per backend router
@@ -233,6 +239,12 @@ frontend/src/
   (`set_ai_error` / `progress_doc_error`). Tests: `fake_ai` scripts replies per
   schema name, `jobs_sent` (autouse) records every enqueue, and `conftest.py` pins
   an empty `OPENAI_API_KEY` — no test reaches a model, Redis or a worker.
+- **Notifications** go through `notification_service.notify(db, user_ids, type, title,
+  body, task=…|project_id=…, exclude=actor)` *before* the commit and
+  `deliver(outbox)` *after* it (live event + email). Never add `Notification` rows by
+  hand. Live events go through `realtime.publish(user_ids, event)` and carry no data —
+  the browser refetches over REST, so authorisation stays in the routes. Tests:
+  `events_sent` (autouse) records every publish.
 - Authorisation is two-layer: platform role on the route, then project role via
   `project_assignments`. Never rely on the frontend to hide a capability.
   **Every new route declares a guard** (`require_admin`, `require_roles(...)` or

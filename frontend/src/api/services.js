@@ -16,7 +16,8 @@ export const servicesApi = {
   getMailpitHealth: () => api.get('/services/health/mailpit'),
   getMinioHealth: () => api.get('/services/health/minio'),
   getLlmHealth: () => api.get('/services/health/llm'),
-  getWsChatStatus: () => api.get('/services/ws/chat/status'),
+  recentJobs: (limit = 30) => api.get('/services/jobs/recent', { params: { limit } }),
+  getWsStatus: () => api.get('/services/ws/status'),
 
   // Actions
   sendMail: (to, subject, body) =>

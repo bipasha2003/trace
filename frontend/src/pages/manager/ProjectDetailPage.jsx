@@ -21,6 +21,9 @@ import GanttChart from '@/components/GanttChart'
 import { ProjectStatusBadge } from '@/components/project/status'
 import { apiError } from '@/lib/project'
 
+// The Manager reads a task and joins its discussion here (PROJECT.md §11.6)
+const taskPath = (taskId) => `/manager/tasks/${taskId}`
+
 export default function ManagerProjectDetailPage() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -64,8 +67,8 @@ export default function ManagerProjectDetailPage() {
           <TabsTrigger value="team">Team</TabsTrigger>
         </TabsList>
         <TabsContent value="overview"><ProjectOverview project={project} isOwner onChange={load} /></TabsContent>
-        <TabsContent value="tasks"><TaskBoard projectId={project.id} /></TabsContent>
-        <TabsContent value="tree"><ProjectTreeGraph projectId={project.id} /></TabsContent>
+        <TabsContent value="tasks"><TaskBoard projectId={project.id} taskPath={taskPath} /></TabsContent>
+        <TabsContent value="tree"><ProjectTreeGraph projectId={project.id} taskPath={taskPath} /></TabsContent>
         <TabsContent value="gantt"><GanttChart projectId={project.id} /></TabsContent>
         <TabsContent value="report"><ProgressReport projectId={project.id} canRefresh /></TabsContent>
         <TabsContent value="team"><TeamPanel projectId={project.id} isOwner onChange={load} /></TabsContent>

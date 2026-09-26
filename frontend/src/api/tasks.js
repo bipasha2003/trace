@@ -14,6 +14,9 @@ export const tasksApi = {
   updateStatus: (id, status) => api.patch(`/tasks/${id}/status`, { status }),
   remove: (id) => api.delete(`/tasks/${id}`),
   progressDoc: (id) => api.get(`/tasks/${id}/progress-doc`),
+  discussions: (id) => api.get(`/tasks/${id}/discussions`),
+  postDiscussion: (id, message, parentId = null) =>
+    api.post(`/tasks/${id}/discussions`, { message, parent_id: parentId }),
 }
 
 export default tasksApi

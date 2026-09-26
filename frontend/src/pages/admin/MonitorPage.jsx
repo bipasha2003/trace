@@ -1,7 +1,7 @@
 /**
  * TRACE — Admin → Monitor Page
- * Promotes ServiceMonitor from an overlay to a full page.
- * Phase 8 extends this with recent Celery job outcomes.
+ * Promotes ServiceMonitor from an overlay to a full page, plus the recent Celery job
+ * outcomes (Phase 8) — an AI job that returned "failed" shows as failed, not success.
  * PROJECT.md §18.
  */
 
@@ -18,10 +18,14 @@ import {
   Activity,
   Mail,
   MessageSquare,
+  Clock,
+  ListChecks,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { formatDateTime } from '@/lib/project'
 import servicesApi from '@/api/services'
 
 function StatusBadge({ status }) {
@@ -46,6 +50,7 @@ const SERVICE_CARDS = [
   { key: 'database', label: 'PostgreSQL',       Icon: Database },
   { key: 'redis',    label: 'Redis',            Icon: Activity },
   { key: 'celery',   label: 'Celery Worker',    Icon: Activity },
+  { key: 'beat',     label: 'Celery Beat',      Icon: Clock },
   { key: 'minio',    label: 'MinIO',            Icon: Cloud },
   { key: 'mailpit',  label: 'Mailpit',          Icon: Mail },
   { key: 'llm',      label: 'LLM',              Icon: Brain },
@@ -62,17 +67,17 @@ export default function MonitorPage() {
   const runChecks = useCallback(async () => {
     setChecking(true)
     try {
-      const res = await servicesApi.getAllHealth()
-      const data = res.data
+      const s = (await servicesApi.getAllHealth()).data.services || {}
       setStatuses({
-        api:      data.api      ?? 'healthy',
-        database: data.database ?? 'unhealthy',
-        redis:    data.redis    ?? 'unhealthy',
-        celery:   data.celery   ?? 'unhealthy',
-        minio:    data.minio    ?? 'unhealthy',
-        mailpit:  data.mailpit  ?? 'unhealthy',
-        llm:      data.llm      ?? 'not_configured',
-        websocket:data.websocket?? 'unhealthy',
+        api:       s.api?.status ?? 'unhealthy',
+        database:  s.database?.status ?? 'unhealthy',
+        redis:     s.redis?.status ?? 'unhealthy',
+        celery:    s.celery_worker?.status ?? 'unhealthy',
+        beat:      s.celery_beat?.status ?? 'unhealthy',
+        minio:     s.minio?.status ?? 'unhealthy',
+        mailpit:   s.mailpit?.status ?? 'unhealthy',
+        llm:       s.llm?.status ?? 'not_configured',
+        websocket: s.websocket?.status ?? 'unhealthy',
       })
     } catch {
       setStatuses(Object.fromEntries(SERVICE_CARDS.map((s) => [s.key, 'unhealthy'])))
@@ -128,6 +133,48 @@ export default function MonitorPage() {
           </Card>
         ))}
       </div>
+
+      <RecentJobs key={lastChecked?.getTime()} />
     </div>
+  )
+}
+
+const OUTCOME_VARIANT = { SUCCESS: 'secondary', FAILED: 'destructive', FAILURE: 'destructive', ERROR: 'destructive' }
+
+function RecentJobs() {
+  const [jobs, setJobs] = useState(null)
+  useEffect(() => {
+    servicesApi.recentJobs(30).then((r) => setJobs(r.data.jobs)).catch(() => setJobs([]))
+  }, [])
+  return (
+    <Card id="recent-jobs">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base"><ListChecks className="size-4" /> Recent jobs</CardTitle>
+        <CardDescription>The last 30 finished Celery jobs (results are kept for a day).</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {jobs === null ? <p className="text-sm text-muted-foreground">Loading…</p> : jobs.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No finished jobs yet — or the worker has not run since results expired.</p>
+        ) : (
+          <div className="overflow-x-auto rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow><TableHead>Job</TableHead><TableHead>Outcome</TableHead><TableHead>Finished</TableHead><TableHead>Detail</TableHead></TableRow>
+              </TableHeader>
+              <TableBody>
+                {jobs.map((j) => (
+                  <TableRow key={j.id}>
+                    <TableCell className="font-mono text-xs">{j.name}</TableCell>
+                    <TableCell><Badge variant={OUTCOME_VARIANT[j.outcome] || 'outline'}>{j.outcome}</Badge></TableCell>
+                    <TableCell className="text-xs">{formatDateTime(j.finished_at)}</TableCell>
+                    <TableCell className="max-w-md truncate text-xs text-muted-foreground" title={j.detail || ''}>{j.detail || '—'}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }

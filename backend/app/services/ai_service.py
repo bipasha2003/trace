@@ -5,8 +5,9 @@ One way to call the model: `complete(ai, Schema, system, user)` sends the prompt
 JSON mode, parses the reply into `Schema`, and on a parse or validation failure
 hands the errors back to the model and asks again. Nothing unvalidated leaves here.
 
-Credentials and the model come from `system_settings` (category `ai`) with the
-.env fallback — never from a call site. Tests pass a fake client with the same
+Credentials and the model come from `.env` only (`OPENAI_API_KEY`, `OPENAI_MODEL`,
+`OPENAI_BASE_URL`) — fixed by whoever runs the server; no Admin screen changes them
+(user decision 2026-09-26). Never from a call site. Tests pass a fake client with the same
 `chat_json` method; no test reaches a real model.
 """
 
@@ -14,10 +15,8 @@ import json
 import logging
 
 from pydantic import BaseModel, ValidationError
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.exceptions import TraceException
-from app.services.system_settings import resolve_setting
+from app.config import get_settings
 
 logger = logging.getLogger("trace.ai")
 
@@ -28,7 +27,7 @@ class AINotConfigured(TraceException):
     def __init__(self):
         super().__init__(
             status_code=503,
-            detail="AI is not configured. Set ai.api_key in Admin → Configuration, or OPENAI_API_KEY in .env.",
+            detail="AI is not configured. Set OPENAI_API_KEY in .env.",
         )
 
 
@@ -55,16 +54,15 @@ class AIClient:
         return response.choices[0].message.content or ""
 
 
-async def ai_configured(db: AsyncSession) -> bool:
-    return bool(await resolve_setting(db, "ai", "api_key"))
+def ai_configured() -> bool:
+    return bool(get_settings().OPENAI_API_KEY)
 
 
-async def client_from_settings(db: AsyncSession) -> AIClient:
-    api_key = await resolve_setting(db, "ai", "api_key")
-    if not api_key:
+def client_from_settings() -> AIClient:
+    settings = get_settings()
+    if not settings.OPENAI_API_KEY:
         raise AINotConfigured()
-    model = await resolve_setting(db, "ai", "model")  # .env OPENAI_MODEL has the default
-    return AIClient(api_key, model, await resolve_setting(db, "ai", "base_url"))
+    return AIClient(settings.OPENAI_API_KEY, settings.OPENAI_MODEL, settings.OPENAI_BASE_URL)
 
 
 def _errors(exc: ValidationError) -> str:

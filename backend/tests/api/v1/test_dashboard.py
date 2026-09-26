@@ -70,18 +70,6 @@ async def test_attendance_summary_admin(client: AsyncClient, admin_headers: dict
 
 
 @pytest.mark.asyncio
-async def test_weekly_html_report(client: AsyncClient, admin_headers: dict):
-    """Admin can generate HTML report."""
-    resp = await client.get(
-        "/api/v1/reports/weekly-html",
-        headers=admin_headers,
-    )
-    assert resp.status_code == 200
-    assert "TRACE Weekly Performance Report" in resp.text
-    assert "<!DOCTYPE html>" in resp.text
-
-
-@pytest.mark.asyncio
 async def test_reports_employee_forbidden(
     client: AsyncClient, employee_headers: dict,
 ):

@@ -18,8 +18,9 @@ from app.core.project_access import resolve_project_access, resolve_task_access
 from app.database import get_db
 from app.models.task import Task
 from app.models.user import User
+from app.exceptions import InsufficientPermissionsException
 from app.schemas.project import (
-    DocumentResponse, TaskAssign, TaskMutationResponse, TaskResponse, TaskStatusUpdate, TaskUpdate,
+    DiscussionCreate, DiscussionResponse, DocumentResponse, TaskAssign, TaskMutationResponse, TaskResponse, TaskStatusUpdate, TaskUpdate,
 )
 from app.services import project_service as svc
 from app.services.github_service import GitHubClient, get_github_client, require_github
@@ -146,3 +147,27 @@ async def get_task_progress_doc(
         return {"kind": "task", "url": None, "content": None}
     content = await ai_jobs.read_document(require_github(github), access.project, ai_jobs.task_doc_path(task.id))
     return {"kind": "task", "url": task.task_progress_doc, "content": content}
+
+
+# ── Discussions (PROJECT.md §11.6) ───────────────────────────────
+
+async def _discussion_access(db: AsyncSession, user: User, task_id: int):
+    task, access = await resolve_task_access(db, user, task_id)
+    if not access.may_discuss(task):
+        raise InsufficientPermissionsException()
+    return task, access
+
+
+@router.get("/{task_id}/discussions", response_model=list[DiscussionResponse],
+            summary="The task's discussion — assignee, assigner, Project Managers, owning Manager")
+async def list_discussions(task_id: int, user: User = Depends(require_any_role), db: AsyncSession = Depends(get_db)):
+    task, _ = await _discussion_access(db, user, task_id)
+    return await svc.list_discussions(db, task)
+
+
+@router.post("/{task_id}/discussions", response_model=DiscussionResponse, status_code=status.HTTP_201_CREATED,
+             summary="Post a message or a reply; the other participants are notified")
+async def post_discussion(task_id: int, data: DiscussionCreate, user: User = Depends(require_any_role),
+                          db: AsyncSession = Depends(get_db)):
+    task, access = await _discussion_access(db, user, task_id)
+    return await svc.post_discussion(db, access, task, data.message, data.parent_id)

@@ -55,41 +55,17 @@ function HealthCard({ title, Icon, status, children, details }) {
   )
 }
 
-function WsChatCard({ status }) {
-  const [msgs, setMsgs] = useState([])
-  const [input, setInput] = useState('')
-  const [connected, setConnected] = useState(false)
-  const wsRef = useRef(null)
-  const scrollRef = useRef(null)
-
+function LiveSocketCard({ status }) {
+  const [online, setOnline] = useState(null)
   useEffect(() => {
-    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-    const ws = new WebSocket(`${proto}://${window.location.host}/api/v1/services/ws/chat`)
-    wsRef.current = ws
-    ws.onopen = () => setConnected(true)
-    ws.onclose = () => setConnected(false)
-    ws.onmessage = (e) => { try { setMsgs(prev => [...prev.slice(-50), JSON.parse(e.data)]) } catch {} }
-    return () => ws.close()
+    servicesApi.getWsStatus().then((r) => setOnline(r.data.online_users)).catch(() => setOnline(null))
   }, [])
-
-  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [msgs])
-
-  const send = () => { if (!input.trim() || !wsRef.current) return; wsRef.current.send(input.trim()); setInput('') }
-
   return (
-    <HealthCard title="WebSocket Chat" Icon={MessageSquare} status={connected ? 'healthy' : (status || 'loading')}>
-      <div className="h-32 overflow-y-auto rounded-md bg-muted/50 p-2 text-xs space-y-1">
-        {msgs.map((m, i) => (
-          <div key={i} className={m.type === 'system' ? 'text-muted-foreground italic' : ''}>
-            {m.type === 'message' && <span className="font-medium">{m.sender}: </span>}{m.content}
-          </div>
-        ))}
-        <div ref={scrollRef} />
-      </div>
-      <div className="flex gap-2">
-        <Input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && send()} placeholder={connected ? 'Type a message…' : 'Connecting…'} disabled={!connected} className="h-8 text-xs" />
-        <Button size="icon-sm" onClick={send} disabled={!connected}><Send className="size-3" /></Button>
-      </div>
+    <HealthCard title="Live events (WebSocket)" Icon={MessageSquare} status={status || 'loading'}>
+      <p className="text-xs text-muted-foreground">
+        Notifications and discussions reach open browsers over <code>/api/v1/ws</code>.
+        {online !== null && <> Users connected to this API: <strong className="text-foreground">{online}</strong>.</>}
+      </p>
     </HealthCard>
   )
 }
@@ -261,7 +237,7 @@ export default function ServiceMonitor({ open, onClose }) {
           <HealthCard title="Redis" Icon={MemoryStick} status={h.redis?.status || 'loading'} details={h.redis?.version ? { version: h.redis.version } : {}} />
           <HealthCard title="Celery Worker" Icon={Clock} status={h.celery_worker?.status || 'loading'} details={h.celery_worker?.status === 'healthy' ? { active: h.celery_worker.active_tasks } : {}} />
           <HealthCard title="Celery Beat" Icon={Clock} status={h.celery_beat?.status || 'loading'} details={h.celery_beat?.task_count != null ? { tasks: h.celery_beat.task_count } : {}} />
-          <WsChatCard status={h.websocket?.status} />
+          <LiveSocketCard status={h.websocket?.status} />
           <MailCard data={h.mailpit} />
           <MinioCard data={h.minio} />
           <LlmCard data={h.llm} />

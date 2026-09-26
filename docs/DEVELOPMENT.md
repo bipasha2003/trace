@@ -547,9 +547,16 @@ There is no webhook, no resolver job and no CI/CD configuration section. Don't r
 
 ---
 
-## Phase 7 — Notifications & discussion
+## Phase 7 — Notifications & discussion ✅
 
 *User direction (2026-09-26): small phase — build it straight, no extras.*
+
+**Status (2026-09-26):** built and tested (`tests/api/v1/test_notifications.py`);
+not browser-checked (user decision). No migration. `notification_service`
+(`notify` → commit → `deliver`), `realtime` (Redis pub/sub → `/api/v1/ws`),
+`/notifications`, `/tasks/{id}/discussions`, `task_due_reminders` (08:00 daily);
+frontend `LiveContext`, `NotificationBell` in all three headers, `TaskDiscussion`,
+`/manager/tasks/:id`. The group-chat socket `/services/ws/chat` is gone.
 
 1. The `notifications` API, header bell, unread count, deep links.
 2. Assignment, due-soon, overdue and completion notifications, in-app and via

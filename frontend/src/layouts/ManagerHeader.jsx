@@ -4,7 +4,7 @@
  */
 
 import { useNavigate } from 'react-router-dom'
-import { Bell, Sun, Moon, ChevronDown, LogOut, Settings } from 'lucide-react'
+import { Sun, Moon, ChevronDown, LogOut, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import ProjectSelector from '@/components/ProjectSelector'
+import NotificationBell from '@/components/NotificationBell'
 import { useTheme } from '@/contexts/ThemeContext'
 import { useAuth } from '@/contexts/AuthContext'
 
@@ -47,10 +48,7 @@ export default function ManagerHeader() {
 
       {/* Right */}
       <div className="ml-auto flex items-center gap-1">
-        <Button id="manager-btn-notifications" variant="ghost" size="icon-sm" className="relative">
-          <Bell />
-          <span className="sr-only">Notifications</span>
-        </Button>
+        <NotificationBell id="manager-btn-notifications" />
 
         <Button
           id="manager-btn-theme"

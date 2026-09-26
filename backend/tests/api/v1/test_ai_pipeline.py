@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.models.employee import Employee
 from app.models.project import Project, TaskGroup
 from app.models.task import Task
@@ -128,12 +129,10 @@ async def test_evaluate_marks_the_project_and_queues_the_job(client: AsyncClient
     assert again.status_code == 409
 
 
-async def test_evaluate_refusals(client: AsyncClient, world: World, db_session: AsyncSession):
+async def test_evaluate_refusals(client: AsyncClient, world: World, db_session: AsyncSession, monkeypatch):
     url = f"{API}/projects/{world.project_id}/evaluate"
     assert (await client.post(url, headers=world.manager)).status_code == 503        # no AI configured
-    from app.services.system_settings import store_setting
-    await store_setting(db_session, "ai", "api_key", "sk-test")
-    await db_session.commit()
+    monkeypatch.setattr(get_settings(), "OPENAI_API_KEY", "sk-test")
     resp = await client.post(url, headers=world.manager)
     assert resp.status_code == 409 and "requirement document" in resp.json()["detail"]
     await _upload(client, world)

@@ -8,7 +8,7 @@ assignment.
 Authorisation is decided before these are called (app.core.project_access).
 """
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,10 +16,11 @@ from sqlalchemy.orm import selectinload
 
 from app.core.project_access import MEMBER, PROJECT_MANAGER, ProjectAccess, platform_roles
 from app.exceptions import NotFoundException, TraceException
-from app.models.project import Notification, Project, ProjectAssignment, ProjectSourceFile, TaskGroup
+from app.models.project import Project, ProjectAssignment, ProjectSourceFile, TaskDiscussion, TaskGroup
 from app.models.task import Task
 from app.models.user import User, UserRole
 from app.services import jobs
+from app.services import notification_service as notifications
 from app.services.github_service import GitHubClient, GitHubError, repo_slug
 
 OPEN_STATUSES = ("Pending", "In Progress", "In Review", "Blocked", "Overdue")
@@ -251,14 +252,11 @@ async def ensure_member(db: AsyncSession, project: Project, user: User, assigned
     return await grant_repo_access(github, project, user)
 
 
-def notify_assignment(db: AsyncSession, task: Task, project: Project, assignee_id: int) -> None:
-    db.add(Notification(
-        user_id=assignee_id, type="task_assigned",
-        title=f"New task: {task.title}",
-        body=f"You were assigned '{task.title}' in {project.name}.",
-        link=f"/employee/tasks/{task.id}",
-        related_task_id=task.id, related_project_id=project.id,
-    ))
+async def notify_assignment(db: AsyncSession, task: Task, project: Project, assignee_id: int,
+                            actor_id: int) -> notifications.Outbox:
+    return await notifications.notify(
+        db, [assignee_id], "task_assigned", f"New task: {task.title}",
+        f"You were assigned '{task.title}' in {project.name}.", task=task, exclude=actor_id)
 
 
 # ── Tasks ────────────────────────────────────────────────────────
@@ -298,6 +296,7 @@ def task_dict(task: Task, access: ProjectAccess | None = None) -> dict:
         "completed_by": task.completed_by, "completed_at": task.completed_at,
         "health_score": task.health_score, "health_reason": task.health_reason,
         "created_at": task.created_at, "updated_at": task.updated_at,
+        "can_discuss": bool(access and access.may_discuss(task)),
         "can_edit": bool(access and access.is_project_manager),
         "allowed_statuses": access.allowed_statuses(task) if access else [],
     }
@@ -396,11 +395,12 @@ async def create_task(db: AsyncSession, access: ProjectAccess, data, github: Git
     warnings += issue_warnings
     task.github_issue_id, task.github_issue_url = str(issue.number), issue.url
 
-    if assignee:
-        notify_assignment(db, task, project, assignee.id)
+    outbox = await notify_assignment(db, task, project, assignee.id, access.user.id) if assignee else None
     await recompute_group(db, group.id)
     await db.commit()
     jobs.enqueue("generate_task_progress_doc", task.id)  # CORE.md §4 step 4 — after the commit
+    if outbox:
+        notifications.deliver(outbox)
     return await load_task(db, task.id), warnings
 
 
@@ -440,9 +440,10 @@ async def assign_task(db: AsyncSession, access: ProjectAccess, task: Task, user_
 
     task.assigned_to_user_id = assignee.id if assignee else None
     task.assigned_by_user_id = access.user.id if assignee else None
-    if assignee:
-        notify_assignment(db, task, project, assignee.id)
+    outbox = await notify_assignment(db, task, project, assignee.id, access.user.id) if assignee else None
     await db.commit()
+    if outbox:
+        notifications.deliver(outbox)
     return await load_task(db, task.id), warnings
 
 
@@ -459,14 +460,23 @@ async def set_status(db: AsyncSession, access: ProjectAccess, task: Task, new_st
             access.project.github_repo, number, open_=not closes, not_planned=new_status == "Cancelled")
 
     task.status = new_status
+    outbox = None
     if new_status == "Completed":
         task.completed_by = "Assignee" if access.is_assignee(task) else "Project Manager"
         task.completed_at = datetime.now(timezone.utc)
+        # CORE.md §9: the Project Managers, and the assignee if someone else completed it
+        outbox = await notifications.notify(
+            db, [*await notifications.project_managers(db, task.project_id), task.assigned_to_user_id],
+            "task_completed", f"Completed: {task.title}",
+            f"'{task.title}' in {access.project.name} was marked complete by {access.user.name}.",
+            task=task, exclude=access.user.id)
     else:
         task.completed_by = None
         task.completed_at = None
     await recompute_group(db, task.task_group_id)
     await db.commit()
+    if outbox:
+        notifications.deliver(outbox)
     if completion_changed:
         from app.services.gantt_service import request_reevaluation
         request_reevaluation(access.project.id, "task_status_change")  # CORE.md §5
@@ -483,20 +493,94 @@ async def delete_task(db: AsyncSession, access: ProjectAccess, task: Task, githu
     await db.commit()
 
 
+async def _notify_due(db: AsyncSession, tasks: list[Task], title: str, body: str) -> notifications.Outbox:
+    """Assignee + the project's Project Managers, per task (CORE.md §9)."""
+    outbox = notifications.Outbox()
+    for task in tasks:
+        recipients = [task.assigned_to_user_id, *await notifications.project_managers(db, task.project_id)]
+        outbox += await notifications.notify(
+            db, recipients, "task_due", title.format(title=task.title),
+            body.format(title=task.title, project=task.project.name, due=task.due_date), task=task)
+    return outbox
+
+
 async def mark_overdue_tasks(db: AsyncSession, today: date) -> dict:
-    """The nightly sweep (CORE.md §8): open past-due tasks → Overdue, one Gantt re-plan per project."""
-    from sqlalchemy import update
+    """The nightly sweep (CORE.md §8): open past-due tasks → Overdue, notify, one Gantt re-plan per project."""
     from app.services.gantt_service import request_reevaluation
 
-    rows = (await db.execute(
-        update(Task)
-        .where(Task.due_date < today, Task.status.in_(("Pending", "In Progress", "In Review", "Blocked")),
-               Task.deleted_at.is_(None), Task.project_id.is_not(None))
-        .values(status="Overdue")
-        .returning(Task.id, Task.project_id)
-    )).all()
+    tasks = (await db.execute(
+        select(Task).where(
+            Task.due_date < today, Task.status.in_(("Pending", "In Progress", "In Review", "Blocked")),
+            Task.deleted_at.is_(None), Task.project_id.is_not(None),
+        ).options(selectinload(Task.project)).order_by(Task.id)
+    )).scalars().all()
+    for task in tasks:
+        task.status = "Overdue"
+    outbox = await _notify_due(db, tasks, "Overdue: {title}",
+                               "'{title}' in {project} was due {due} and is not complete.")
     await db.commit()
-    projects = sorted({pid for _, pid in rows})
+    notifications.deliver(outbox)
+    projects = sorted({t.project_id for t in tasks})
     for project_id in projects:
         request_reevaluation(project_id, "task_status_change")
-    return {"status": "success", "date": today.isoformat(), "tasks": [tid for tid, _ in rows], "projects": projects}
+    return {"status": "success", "date": today.isoformat(), "tasks": [t.id for t in tasks], "projects": projects}
+
+
+async def task_due_reminders(db: AsyncSession, today: date) -> dict:
+    """The daily reminder (CORE.md §8): open tasks due tomorrow."""
+    tomorrow = today + timedelta(days=1)
+    tasks = (await db.execute(
+        select(Task).where(
+            Task.due_date == tomorrow, Task.status.in_(OPEN_STATUSES),
+            Task.deleted_at.is_(None), Task.project_id.is_not(None),
+        ).options(selectinload(Task.project)).order_by(Task.id)
+    )).scalars().all()
+    outbox = await _notify_due(db, tasks, "Due tomorrow: {title}", "'{title}' in {project} is due {due}.")
+    await db.commit()
+    notifications.deliver(outbox)
+    return {"status": "success", "date": today.isoformat(), "tasks": [t.id for t in tasks]}
+
+
+# ── Discussions (PROJECT.md §11.6) ───────────────────────────────
+
+def discussion_dict(d: TaskDiscussion) -> dict:
+    return {"id": d.id, "task_id": d.task_id, "parent_id": d.parent_id, "message": d.message,
+            "author": person(d.user), "created_at": d.created_at}
+
+
+async def list_discussions(db: AsyncSession, task: Task) -> list[dict]:
+    rows = (await db.execute(
+        select(TaskDiscussion).where(TaskDiscussion.task_id == task.id, TaskDiscussion.deleted_at.is_(None))
+        .options(selectinload(TaskDiscussion.user)).order_by(TaskDiscussion.id)
+    )).scalars().all()
+    return [discussion_dict(d) for d in rows]
+
+
+async def post_discussion(db: AsyncSession, access: ProjectAccess, task: Task, message: str,
+                          parent_id: int | None) -> dict:
+    """One level of threading: a reply to a reply joins its root message's thread."""
+    if parent_id is not None:
+        parent = await db.get(TaskDiscussion, parent_id)
+        if parent is None or parent.task_id != task.id or parent.deleted_at is not None:
+            raise TraceException(422, "The message you are replying to is not on this task")
+        parent_id = parent.parent_id or parent.id
+    entry = TaskDiscussion(task_id=task.id, user_id=access.user.id, parent_id=parent_id, message=message.strip())
+    db.add(entry)
+    await db.flush()
+
+    # CORE.md §9: the other participants — everyone who has written here, plus the task's two parties
+    authors = (await db.execute(
+        select(TaskDiscussion.user_id).where(TaskDiscussion.task_id == task.id,
+                                             TaskDiscussion.deleted_at.is_(None)).distinct()
+    )).scalars().all()
+    outbox = await notifications.notify(
+        db, [*authors, task.assigned_to_user_id, task.assigned_by_user_id], "discussion_reply",
+        f"{access.user.name} on {task.title}", message.strip()[:280], task=task,
+        email=False, exclude=access.user.id)
+    await db.commit()
+    notifications.deliver(outbox)
+    viewers = [access.project.created_by_user_id, task.assigned_to_user_id, task.assigned_by_user_id,
+               *await notifications.project_managers(db, task.project_id)]
+    notifications.discussion_event(viewers, task.id)
+    await db.refresh(entry, ["user"])
+    return discussion_dict(entry)

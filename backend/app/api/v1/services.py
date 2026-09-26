@@ -2,21 +2,19 @@
 TRACE - Service Health & Monitoring API
 Comprehensive health checks for all infrastructure services.
 Includes: API, DB, Redis, Celery Worker, Celery Beat, Mailpit, MinIO, LLM.
-Also: WebSocket chat, test mail, test upload, LLM chat endpoints.
+Also: live-event socket status, test mail, test upload, LLM chat endpoints.
 """
 
 import asyncio
-import json
 import logging
 import smtplib
 import time
-import uuid
 from datetime import datetime, timezone
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Optional
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -85,7 +83,7 @@ async def all_service_health():
     results["llm"] = _check_llm_config()
 
     # WebSocket (always available if API is up)
-    results["websocket"] = {"status": "healthy", "endpoint": "/api/v1/services/ws/chat"}
+    results["websocket"] = {"status": "healthy", "endpoint": "/api/v1/ws"}
 
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -278,88 +276,56 @@ def _check_llm_config():
 
 
 # ══════════════════════════════════════════════════════════════════
-#  WEBSOCKET CHAT
+#  RECENT CELERY JOBS — Admin → Monitor (DEVELOPMENT.md Phase 8 step 4)
 # ══════════════════════════════════════════════════════════════════
 
-class ConnectionManager:
-    """Manages WebSocket connections for the chat feature."""
-
-    def __init__(self):
-        self.active_connections: dict[str, WebSocket] = {}
-
-    async def connect(self, websocket: WebSocket, client_id: str):
-        await websocket.accept()
-        self.active_connections[client_id] = websocket
-        await self.broadcast_system(f"User {client_id[:8]} joined the chat")
-
-    def disconnect(self, client_id: str):
-        self.active_connections.pop(client_id, None)
-
-    async def send_personal(self, message: str, websocket: WebSocket):
-        await websocket.send_text(message)
-
-    async def broadcast(self, message: str, sender_id: str):
-        payload = json.dumps({
-            "type": "message",
-            "sender": sender_id[:8],
-            "content": message,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
-        for client_id, connection in self.active_connections.items():
-            try:
-                await connection.send_text(payload)
-            except Exception:
-                pass
-
-    async def broadcast_system(self, message: str):
-        payload = json.dumps({
-            "type": "system",
-            "content": message,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
-        for connection in self.active_connections.values():
-            try:
-                await connection.send_text(payload)
-            except Exception:
-                pass
-
-    def get_online_count(self):
-        return len(self.active_connections)
+def _job_outcome(meta: dict) -> dict:
+    """One stored Celery result → a row. A job that returned {'status': 'failed'} failed, whatever Celery says."""
+    result, state = meta.get("result"), meta.get("status")
+    outcome, detail = state, None
+    if state == "SUCCESS" and isinstance(result, dict) and result.get("status") in ("failed", "error", "skipped"):
+        outcome = result["status"].upper()
+        detail = result.get("error") or result.get("reason")
+    elif state == "FAILURE":
+        detail = (result or {}).get("exc_message") if isinstance(result, dict) else str(result)
+        if isinstance(detail, list):
+            detail = "; ".join(map(str, detail))
+    name = (meta.get("name") or "").removeprefix("app.tasks.") or "unknown"
+    return {"id": meta.get("task_id"), "name": name, "state": state, "outcome": outcome,
+            "detail": detail, "finished_at": meta.get("date_done")}
 
 
-manager = ConnectionManager()
+@router.get("/jobs/recent", dependencies=[Depends(require_admin)])
+async def recent_jobs(limit: int = 30):
+    """The newest finished Celery jobs, from the Redis result backend (kept 24 h by Celery's default)."""
+    import json as _json
+    import redis.asyncio as aioredis
 
-
-@router.websocket("/ws/chat")
-async def websocket_chat(websocket: WebSocket):
-    """WebSocket endpoint for real-time chat."""
-    client_id = str(uuid.uuid4())
-    await manager.connect(websocket, client_id)
+    client = aioredis.Redis.from_url(settings.REDIS_URL)
     try:
-        # Send welcome message
-        welcome = json.dumps({
-            "type": "welcome",
-            "client_id": client_id[:8],
-            "online": manager.get_online_count(),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
-        await websocket.send_text(welcome)
-
-        while True:
-            data = await websocket.receive_text()
-            await manager.broadcast(data, client_id)
-    except WebSocketDisconnect:
-        manager.disconnect(client_id)
-        await manager.broadcast_system(f"User {client_id[:8]} left the chat")
+        metas = []
+        async for key in client.scan_iter(match="celery-task-meta-*", count=500):
+            raw = await client.get(key)
+            if raw:
+                try:
+                    metas.append(_json.loads(raw))
+                except ValueError:
+                    continue
+    finally:
+        await client.aclose()
+    metas.sort(key=lambda m: m.get("date_done") or "", reverse=True)
+    return {"jobs": [_job_outcome(m) for m in metas[:max(1, min(limit, 100))]]}
 
 
-@router.get("/ws/chat/status", dependencies=[Depends(require_admin)])
-async def ws_chat_status():
-    """Get current WebSocket chat status."""
-    return {
-        "online_users": manager.get_online_count(),
-        "status": "active",
-    }
+# ══════════════════════════════════════════════════════════════════
+#  LIVE EVENTS — the socket itself is /api/v1/ws (api/v1/notifications.py)
+# ══════════════════════════════════════════════════════════════════
+
+@router.get("/ws/status", dependencies=[Depends(require_admin)])
+async def ws_status():
+    """How many users have the live-event socket open on this API process."""
+    from app.services.realtime import hub
+    return {"online_users": hub.online(), "status": "active"}
 
 
 # ══════════════════════════════════════════════════════════════════

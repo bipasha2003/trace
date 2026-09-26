@@ -81,6 +81,11 @@ ROLE_MATRIX = [
     ("GET", "/api/v1/dashboard/stats", ADMIN),
     ("GET", "/api/v1/admin/tables", ADMIN),
     ("GET", "/api/v1/admin/settings/github", ADMIN),
+    ("GET", "/api/v1/admin/settings/mail", ADMIN),
+    ("GET", "/api/v1/admin/workforce", ADMIN),
+    ("GET", "/api/v1/admin/workforce/departments", ADMIN),
+    ("GET", "/api/v1/notifications", ANY_ROLE),
+    ("GET", "/api/v1/notifications/unread-count", ANY_ROLE),
     ("GET", "/api/v1/users", ADMIN_MANAGER),
     ("GET", "/api/v1/users/me", ANY_ROLE),
     ("GET", "/api/v1/departments", ANY_ROLE),
@@ -93,7 +98,7 @@ ADMIN_ONLY_DENIAL_CHECKS = [
     ("GET", "/api/v1/services/health/all", None),
     ("GET", "/api/v1/services/health/database", None),
     ("GET", "/api/v1/services/health/llm", None),
-    ("GET", "/api/v1/services/ws/chat/status", None),
+    ("GET", "/api/v1/services/ws/status", None),
     ("POST", "/api/v1/services/mail/send", {"to": "a@b.co", "subject": "s", "body": "b"}),
     ("POST", "/api/v1/services/llm/chat", {"message": "hi"}),
     ("POST", "/api/v1/hrms/holidays", {"name": "X", "holiday_date": "2026-12-25"}),
@@ -103,6 +108,10 @@ ADMIN_ONLY_DENIAL_CHECKS = [
     ("POST", "/api/v1/productivity/compute-all", None),
     ("PUT", "/api/v1/admin/settings/github", {"owner": "hijack"}),
     ("POST", "/api/v1/admin/settings/github/test", None),
+    ("POST", "/api/v1/admin/settings/mail/test", None),
+    ("PUT", "/api/v1/admin/settings/mail", {"host": "hijack"}),
+    ("GET", "/api/v1/services/jobs/recent", None),
+    ("POST", "/api/v1/admin/workforce/departments", {"name": "Blocked"}),
 ]
 
 

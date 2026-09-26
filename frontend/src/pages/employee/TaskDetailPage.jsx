@@ -1,12 +1,13 @@
 /**
- * TRACE — Employee: task detail
- * Description, linked GitHub issue, the rendered progress doc (CORE.md §4), status. The assignee updates the
+ * TRACE — Task detail (Employee, and the owning Manager at /manager/tasks/:id)
+ * Description, linked GitHub issue, the rendered progress doc (CORE.md §4), status,
+ * and the task's discussion when `can_discuss` (PROJECT.md §11.6). The assignee updates the
  * status themselves, completion included (CORE.md §7); the buttons come from the
  * server's `allowed_statuses`, never re-derived here. PROJECT.md §20.
  */
 
 import { useCallback, useEffect, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, CheckCircle2, ExternalLink, FileText, GitCommitHorizontal, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -21,11 +22,13 @@ import { tasksApi } from '@/api/tasks'
 import { projectsApi } from '@/api/projects'
 import { TaskStatusBadge } from '@/components/project/status'
 import Markdown from '@/components/Markdown'
+import TaskDiscussion from '@/components/project/TaskDiscussion'
 import { apiError, formatDate, isOverdue } from '@/lib/project'
 
 export default function TaskDetailPage() {
   const { taskId } = useParams()
   const navigate = useNavigate()
+  const panel = useLocation().pathname.startsWith('/manager') ? '/manager' : '/employee'
   const [task, setTask] = useState(null)
   const [candidates, setCandidates] = useState([])
   const [busy, setBusy] = useState(null)
@@ -40,9 +43,9 @@ export default function TaskDetailPage() {
       if (data.can_edit) setCandidates((await projectsApi.candidates(data.project_id)).data)
     } catch (err) {
       toast.error(apiError(err, 'Could not load the task'))
-      if ([403, 404].includes(err.response?.status)) navigate('/employee', { replace: true })
+      if ([403, 404].includes(err.response?.status)) navigate(panel, { replace: true })
     }
-  }, [taskId, navigate])
+  }, [taskId, navigate, panel])
 
   useEffect(() => { load() }, [load])
 
@@ -78,7 +81,7 @@ export default function TaskDetailPage() {
   return (
     <div id="task-detail-page" className="space-y-6 max-w-4xl">
       <div>
-        <Button variant="ghost" size="sm" className="-ml-2 mb-2" nativeButton={false} render={<Link to={`/employee/projects/${task.project_id}`} />}>
+        <Button variant="ghost" size="sm" className="-ml-2 mb-2" nativeButton={false} render={<Link to={`${panel}/projects/${task.project_id}`} />}>
           <ArrowLeft /> {task.project_name}
         </Button>
         <div className="flex flex-wrap items-center gap-2">
@@ -146,6 +149,8 @@ export default function TaskDetailPage() {
               )}
             </CardContent>
           </Card>
+
+          {task.can_discuss && <TaskDiscussion taskId={task.id} />}
         </div>
 
         <div className="space-y-4">

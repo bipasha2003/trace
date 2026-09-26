@@ -5,10 +5,11 @@
  */
 
 import { useState } from 'react'
-import { Bell, Sun, Moon, MonitorCheck } from 'lucide-react'
+import { Sun, Moon, MonitorCheck } from 'lucide-react'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
+import NotificationBell from '@/components/NotificationBell'
 import { useTheme } from '@/contexts/ThemeContext'
 import ServiceMonitor from '@/components/ServiceMonitor'
 
@@ -30,10 +31,7 @@ export default function AdminHeader() {
         </span>
 
         <div className="ml-auto flex items-center gap-1">
-          <Button id="admin-btn-notifications" variant="ghost" size="icon-sm" className="relative">
-            <Bell />
-            <span className="sr-only">Notifications</span>
-          </Button>
+        <NotificationBell id="admin-btn-notifications" />
 
           <Button
             id="admin-btn-monitor"

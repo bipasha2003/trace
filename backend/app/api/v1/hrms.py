@@ -1,25 +1,22 @@
 """
 TRACE - HRMS API Endpoints
-Manages employee leaves, holidays, work schedule shifts, and bulk dataset uploading.
+Manages employee leaves, holidays and work schedule shifts. Bulk upload moved to
+Admin → Workforce (`/admin/workforce/{tab}/bulk`, Phase 8).
 """
 
-import csv
-import io
-import json
 import logging
-from datetime import date, datetime
-from typing import List, Optional
+from datetime import date
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select, update, delete
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.permissions import require_admin
 from app.database import get_db
-from app.models.employee import Employee, WorkSchedule, Department
-from app.models.attendance import Attendance
+from app.models.employee import WorkSchedule
 from app.models.hrms import Leave, Holiday
 
 logger = logging.getLogger("trace.hrms")
@@ -258,90 +255,6 @@ async def delete_shift(shift_id: int, db: AsyncSession = Depends(get_db)):
     await db.delete(shift)
     await db.commit()
     return {"status": "success", "message": "Shift deleted successfully"}
-
-
-# ── BULK UPLOADING ENDPOINT ───────────────────────────────────────
-@router.post("/bulk-upload")
-async def bulk_upload_hrms_data(
-    entity_type: str = Form(...),  # 'employees', 'attendance', 'leaves', 'holidays', 'shifts'
-    file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Bulk upload CSV or JSON data for HRMS entities.
-    Supports uploading Employees, Attendance, Leaves, Holidays, and Shifts.
-    """
-    content = await file.read()
-    filename = file.filename.lower()
-    records = []
-
-    try:
-        if filename.endswith(".json"):
-            records = json.loads(content.decode("utf-8"))
-        elif filename.endswith(".csv"):
-            text = content.decode("utf-8")
-            reader = csv.DictReader(io.StringIO(text))
-            records = [row for row in reader]
-        else:
-            raise HTTPException(status_code=400, detail="Only CSV and JSON files are supported")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to parse file: {str(e)}")
-
-    inserted_count = 0
-    try:
-        if entity_type == "holidays":
-            for r in records:
-                date_val = datetime.strptime(r["holiday_date"], "%Y-%m-%d").date() if isinstance(r.get("holiday_date"), str) else r["holiday_date"]
-                h = Holiday(
-                    name=r["name"],
-                    holiday_date=date_val,
-                    description=r.get("description"),
-                    type=r.get("type", "Public"),
-                )
-                db.add(h)
-                inserted_count += 1
-
-        elif entity_type == "leaves":
-            for r in records:
-                s_date = datetime.strptime(r["start_date"], "%Y-%m-%d").date() if isinstance(r.get("start_date"), str) else r["start_date"]
-                e_date = datetime.strptime(r["end_date"], "%Y-%m-%d").date() if isinstance(r.get("end_date"), str) else r["end_date"]
-                l = Leave(
-                    employee_id=int(r["employee_id"]),
-                    leave_type=r.get("leave_type", "Casual"),
-                    start_date=s_date,
-                    end_date=e_date,
-                    reason=r.get("reason"),
-                    status=r.get("status", "Pending"),
-                )
-                db.add(l)
-                inserted_count += 1
-
-        elif entity_type == "attendance":
-            for r in records:
-                att_date = datetime.strptime(r["attendance_date"], "%Y-%m-%d").date() if isinstance(r.get("attendance_date"), str) else r["attendance_date"]
-                a = Attendance(
-                    employee_id=int(r["employee_id"]),
-                    attendance_date=att_date,
-                    location=r.get("location", "Office"),
-                    location_status=r.get("location_status", "office"),
-                )
-                db.add(a)
-                inserted_count += 1
-
-        else:
-            raise HTTPException(status_code=400, detail=f"Unsupported entity_type: {entity_type}")
-
-        await db.commit()
-        return {
-            "status": "success",
-            "message": f"Successfully bulk imported {inserted_count} {entity_type} records",
-            "count": inserted_count,
-        }
-
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Bulk upload failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Database import failed: {str(e)}")
 
 
 # ── SHIFT ASSIGNMENT ──────────────────────────────────────────────

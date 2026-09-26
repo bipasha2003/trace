@@ -9,7 +9,6 @@ from datetime import date
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi.responses import HTMLResponse
 
 from app.core.permissions import require_admin, require_manager_or_admin
 from app.dependencies import get_current_user
@@ -161,23 +160,6 @@ async def attendance_summary(
 ):
     service = ReportService(db)
     return await service.generate_attendance_summary(target_date)
-
-
-@router.get(
-    "/reports/weekly-html",
-    response_class=HTMLResponse,
-    summary="Weekly report as HTML",
-    description="Admin/Manager only. Renderable HTML report (PDF-ready).",
-)
-async def weekly_report_html(
-    week_start: date | None = None,
-    current_user: User = Depends(require_manager_or_admin),
-    db: AsyncSession = Depends(get_db),
-):
-    service = ReportService(db)
-    summary = await service.generate_weekly_summary(week_start)
-    html = service.generate_report_html(summary)
-    return HTMLResponse(content=html)
 
 
 # ══════════════════════════════════════════════════════════════════

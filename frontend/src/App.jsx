@@ -28,7 +28,6 @@ import ControlPanelPage from './pages/admin/ControlPanelPage'
 import WorkforcePage from './pages/admin/WorkforcePage'
 import MonitorPage from './pages/admin/MonitorPage'
 import ConfigurationPage from './pages/admin/ConfigurationPage'
-import ReportsPage from './pages/admin/ReportsPage'
 import AdminSettingsPage from './pages/admin/AdminSettingsPage'
 
 // Manager pages
@@ -69,7 +68,6 @@ function App() {
           <Route path="/admin/workforce" element={<WorkforcePage />} />
           <Route path="/admin/monitor" element={<MonitorPage />} />
           <Route path="/admin/configuration" element={<ConfigurationPage />} />
-          <Route path="/admin/reports" element={<ReportsPage />} />
           <Route path="/admin/settings" element={<AdminSettingsPage />} />
         </Route>
       </Route>
@@ -80,6 +78,7 @@ function App() {
           <Route path="/manager" element={<ManagerDashboardPage />} />
           <Route path="/manager/projects/new" element={<ProjectCreatePage />} />
           <Route path="/manager/projects/:id" element={<ManagerProjectDetailPage />} />
+          <Route path="/manager/tasks/:taskId" element={<TaskDetailPage />} />
           <Route path="/manager/settings" element={<ManagerSettingsPage />} />
         </Route>
       </Route>

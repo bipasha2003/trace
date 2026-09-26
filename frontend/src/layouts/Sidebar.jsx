@@ -10,7 +10,6 @@ import {
   Users,
   Activity,
   Settings2,
-  FileBarChart,
   Shield,
   LogOut,
   Settings,
@@ -38,7 +37,6 @@ const ADMIN_NAV = [
   { key: 'workforce',     label: 'Workforce',      path: '/admin/workforce',     icon: Users },
   { key: 'monitor',       label: 'Monitor',         path: '/admin/monitor',       icon: Activity },
   { key: 'configuration', label: 'Configuration',   path: '/admin/configuration', icon: Settings2 },
-  { key: 'reports',       label: 'Reports',          path: '/admin/reports',       icon: FileBarChart },
 ]
 
 function getInitials(name) {

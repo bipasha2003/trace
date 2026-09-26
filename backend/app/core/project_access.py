@@ -66,6 +66,12 @@ class ProjectAccess:
     def is_assignee(self, task: Task) -> bool:
         return self.platform_role == "Employee" and task.assigned_to_user_id == self.user.id
 
+    def may_discuss(self, task: Task) -> bool:
+        """PROJECT.md §11.6 — the assignee, the assigner, the Project Managers and the owning Manager."""
+        return (self.is_owner or self.is_project_manager
+                or (self.platform_role == "Employee"
+                    and self.user.id in (task.assigned_to_user_id, task.assigned_by_user_id)))
+
     def may_set_status(self, task: Task, new_status: str) -> None:
         """CORE.md §7 — enforced here, in the API layer, whatever the UI shows."""
         if new_status in SYSTEM_ONLY_STATUSES:

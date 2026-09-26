@@ -367,6 +367,27 @@ def jobs_sent(monkeypatch) -> JobRecorder:
     return recorder
 
 
+class EventRecorder:
+    """Stands in for `realtime.publish`: records (user_ids, event) instead of reaching Redis."""
+
+    def __init__(self):
+        self.sent: list[tuple[list[int], dict]] = []
+
+    def __call__(self, user_ids, event):
+        self.sent.append((sorted({u for u in user_ids if u}), event))
+
+    def to(self, user_id: int) -> list[dict]:
+        return [e for ids, e in self.sent if user_id in ids]
+
+
+@pytest.fixture(autouse=True)
+def events_sent(monkeypatch) -> EventRecorder:
+    from app.services import realtime
+    recorder = EventRecorder()
+    monkeypatch.setattr(realtime, "publish", recorder)
+    return recorder
+
+
 class FakeAI:
     """The model, scripted per output schema: `fake_ai.reply("TaskGroupPlanOut", {...})`.
 
@@ -393,10 +414,13 @@ class FakeAI:
         return sum(1 for name, _ in self.calls if name == schema)
 
 
-@pytest_asyncio.fixture
-async def fake_ai(db_session: AsyncSession) -> FakeAI:
-    """A fake model, and an ai.api_key in Configuration so routes see AI as configured."""
-    from app.services.system_settings import store_setting
-    await store_setting(db_session, "ai", "api_key", "sk-test")
-    await db_session.commit()
+@pytest.fixture
+def ai_key(monkeypatch):
+    """An OPENAI_API_KEY in Settings, so routes see AI as configured (.env is the only source)."""
+    monkeypatch.setattr(get_settings(), "OPENAI_API_KEY", "sk-test")
+
+
+@pytest.fixture
+def fake_ai(ai_key) -> FakeAI:
+    """A fake model, with AI configured."""
     return FakeAI()

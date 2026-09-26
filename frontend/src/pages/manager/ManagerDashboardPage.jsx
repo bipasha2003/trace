@@ -16,6 +16,7 @@ import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTi
 import { useAuth } from '@/contexts/AuthContext'
 import { projectsApi } from '@/api/projects'
 import { ProjectStatusBadge, TaskStatusBadge } from '@/components/project/status'
+import ReportDownload from '@/components/project/ReportDownload'
 import { apiError, formatDate, initials } from '@/lib/project'
 
 export default function ManagerDashboardPage() {
@@ -58,6 +59,7 @@ export default function ManagerDashboardPage() {
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="icon" onClick={refresh} aria-label="Refresh"><RefreshCw /></Button>
+          <ReportDownload projects={list} />
           <Button id="btn-new-project" onClick={() => navigate('/manager/projects/new')}>
             <Plus /> New project
           </Button>

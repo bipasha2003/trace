@@ -16,6 +16,8 @@ from app.api.v1.services import router as services_router
 from app.api.v1.hrms import router as hrms_router
 from app.api.v1.admin import router as admin_router
 from app.api.v1.settings import router as settings_router
+from app.api.v1.notifications import router as notifications_router, ws_router
+from app.api.v1.workforce import router as workforce_router
 
 router = APIRouter(prefix="/api/v1")
 
@@ -29,5 +31,8 @@ router.include_router(tasks_router)
 router.include_router(productivity_router)
 router.include_router(services_router)
 router.include_router(settings_router)
+router.include_router(notifications_router)
+router.include_router(ws_router)
+router.include_router(workforce_router)
 router.include_router(admin_router, prefix="/admin", tags=["Admin Panel"])
 

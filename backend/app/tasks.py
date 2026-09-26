@@ -3,10 +3,10 @@ TRACE - Celery Background Tasks
 Scheduled and on-demand tasks for the TRACE system.
 
 Scheduled (celery_app.beat_schedule):
-- mark_overdue_tasks — nightly: open past-due tasks → Overdue, Gantt re-plan
+- mark_overdue_tasks — nightly: open past-due tasks → Overdue, notify, Gantt re-plan
+- task_due_reminders — daily: due-tomorrow notifications
 - compute_all_weekly_scores — weekly: task-signal scores for every Employee
 - update_project_progress_docs — weekly: the AI progress roll-up per Active project
-- send_weekly_report — weekly: the performance report
 
 On demand: the AI pipeline (evaluate_project, generate_task_progress_doc,
 reevaluate_gantt, suggest_*), mail, MinIO upload, LLM test, task health.
@@ -51,6 +51,23 @@ def mark_overdue_tasks(self):
         raise self.retry(exc=e, countdown=60)
 
 
+@celery_app.task(name="app.tasks.task_due_reminders", bind=True, max_retries=3)
+def task_due_reminders(self):
+    """Notify the assignee and Project Managers of open tasks due tomorrow (CORE.md §8–9)."""
+    async def _remind():
+        from app.services.jobs import job_session
+        from app.services.project_service import task_due_reminders as remind
+
+        async with job_session() as db:
+            return await remind(db, date.today())
+
+    try:
+        return _run_async(_remind())
+    except Exception as e:
+        logger.error(f"[task_due_reminders] Failed: {e}")
+        raise self.retry(exc=e, countdown=60)
+
+
 # ══════════════════════════════════════════════════════════════════
 #  AI PIPELINE — CORE.md §3–6. The bodies are in app/services/ai_jobs.py;
 #  these only open a session and build the AI and GitHub clients.
@@ -63,7 +80,7 @@ def _ai_job(task, runner: str, *args):
         from app.services.jobs import job_session
 
         async with job_session() as db:
-            ai = await ai_service.client_from_settings(db) if await ai_service.ai_configured(db) else None
+            ai = ai_service.client_from_settings() if ai_service.ai_configured() else None
             github = await get_github_client(db)
             return await getattr(ai_jobs, runner)(db, *args, job_id=task.request.id, ai=ai, github=github)
 
@@ -190,119 +207,29 @@ def compute_all_weekly_scores(self):
 
 
 # ══════════════════════════════════════════════════════════════════
-#  TASK 3: Send Weekly Report (Every Monday)
-# ══════════════════════════════════════════════════════════════════
-
-@celery_app.task(name="app.tasks.send_weekly_report", bind=True, max_retries=3)
-def send_weekly_report(self):
-    """
-    Runs every Monday at 8 AM.
-    Generates the weekly performance report and sends it to the admin email.
-    Placeholder for SendGrid integration.
-    """
-    async def _send():
-        from app.database import async_session_factory
-        from app.services.report_service import ReportService
-        from app.config import get_settings
-
-        settings = get_settings()
-        today = date.today()
-        last_week_start = today - timedelta(days=today.weekday() + 7)
-
-        async with async_session_factory() as db:
-            try:
-                service = ReportService(db)
-                summary = await service.generate_weekly_summary(last_week_start)
-                html = service.generate_report_html(summary)
-
-                admin_email = settings.ADMIN_EMAIL
-
-                # ── SendGrid Integration Point ──
-                # In production, replace this block with actual SendGrid API call:
-                #
-                # import sendgrid
-                # from sendgrid.helpers.mail import Mail, Content
-                # sg = sendgrid.SendGridAPIClient(api_key=settings.SENDGRID_API_KEY)
-                # message = Mail(
-                #     from_email="noreply@trace.com",
-                #     to_emails=admin_email,
-                #     subject=f"TRACE Weekly Report - Week of {last_week_start}",
-                #     html_content=html,
-                # )
-                # sg.send(message)
-
-                logger.info(
-                    f"[weekly_report] Generated report for week {last_week_start}. "
-                    f"Admin: {admin_email}. "
-                    f"Employees: {summary.get('total_employees', 0)}. "
-                    f"Avg Score: {summary.get('average_score', 'N/A')}"
-                )
-
-                return {
-                    "status": "success",
-                    "week_start": last_week_start.isoformat(),
-                    "admin_email": admin_email,
-                    "total_employees": summary.get("total_employees", 0),
-                    "avg_score": summary.get("average_score"),
-                    "at_risk_count": summary.get("at_risk_count", 0),
-                    "email_sent": False,  # Set to True when SendGrid is configured
-                }
-            except Exception as e:
-                logger.error(f"[weekly_report] Failed: {e}")
-                raise self.retry(exc=e, countdown=300)
-
-    return _run_async(_send())
-
-
-# ══════════════════════════════════════════════════════════════════
 #  TASK 4: Send Mail via Mailpit SMTP (Celery)
 # ══════════════════════════════════════════════════════════════════
 
 @celery_app.task(name="app.tasks.send_mail_task", bind=True, max_retries=3)
 def send_mail_task(self, to_email: str, subject: str, body: str):
     """
-    Send an email via SMTP (Mailpit in development).
-    Triggered by the service monitor mail test feature.
+    Send one email: notification emails (notification_service.deliver) and the
+    Service Monitor's test mail. The SMTP server is resolved on every send from
+    Admin → Configuration, then .env (mail_service).
     """
+    async def _config():
+        from app.services.jobs import job_session
+        from app.services.mail_service import mail_config
+        async with job_session() as db:
+            return await mail_config(db)
+
     try:
-        import smtplib
-        from email.mime.text import MIMEText
-        from email.mime.multipart import MIMEMultipart
-        from app.config import get_settings
+        from app.services.mail_service import send
 
-        settings = get_settings()
-
-        msg = MIMEMultipart("alternative")
-        msg["From"] = settings.SMTP_FROM
-        msg["To"] = to_email
-        msg["Subject"] = subject
-
-        # HTML body
-        html = f"""
-        <html>
-        <body style="font-family: 'Inter', sans-serif; background: #0f0f11; color: #f0f0f5; padding: 32px;">
-            <div style="max-width: 600px; margin: 0 auto; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 32px;">
-                <h2 style="color: #c4b5fd; margin-top: 0;">📧 TRACE Mail</h2>
-                <p style="color: #d1d5db; line-height: 1.6;">{body}</p>
-                <hr style="border: none; border-top: 1px solid rgba(255,255,255,0.08); margin: 24px 0;">
-                <p style="color: #9ca3af; font-size: 12px;">Sent from TRACE Service Monitor</p>
-            </div>
-        </body>
-        </html>
-        """
-        msg.attach(MIMEText(body, "plain"))
-        msg.attach(MIMEText(html, "html"))
-
-        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10) as smtp:
-            smtp.sendmail(settings.SMTP_FROM, to_email, msg.as_string())
-
+        config = _run_async(_config())
+        send(config, to_email, subject, body)
         logger.info(f"[send_mail_task] Email sent to {to_email}: {subject}")
-        return {
-            "status": "success",
-            "to": to_email,
-            "subject": subject,
-            "smtp": f"{settings.SMTP_HOST}:{settings.SMTP_PORT}",
-        }
+        return {"status": "success", "to": to_email, "subject": subject, "smtp": f"{config.host}:{config.port}"}
     except Exception as e:
         logger.error(f"[send_mail_task] Failed: {e}")
         raise self.retry(exc=e, countdown=30)
@@ -377,18 +304,12 @@ def llm_chat_task(self, message: str, model: str = None):
     try:
         from openai import OpenAI
 
-        async def _resolve():
-            from app.services.jobs import job_session
-            from app.services.system_settings import resolve_setting
-            async with job_session() as db:
-                return [await resolve_setting(db, "ai", k) for k in ("api_key", "base_url", "model")]
+        from app.config import get_settings
 
-        api_key, base_url, default_model = _run_async(_resolve())  # Configuration first, then .env
+        settings = get_settings()  # fixed in .env — never Admin-configurable
+        api_key, base_url, default_model = settings.OPENAI_API_KEY, settings.OPENAI_BASE_URL, settings.OPENAI_MODEL
         if not api_key:
-            return {
-                "status": "error",
-                "error": "AI is not configured. Set it in Admin → Configuration, or OPENAI_API_KEY in .env.",
-            }
+            return {"status": "error", "error": "AI is not configured. Set OPENAI_API_KEY in .env."}
 
         client_kwargs = {"api_key": api_key}
         if base_url:
