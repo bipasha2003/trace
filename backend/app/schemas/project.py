@@ -37,17 +37,15 @@ class PersonBrief(BaseModel):
 # ── Projects ─────────────────────────────────────────────────────
 
 class ProjectCreate(BaseModel):
+    """No repository field: TRACE creates `<organization>/<name-slug>` itself (CORE.md §4.1)."""
     name: str = Field(..., min_length=2, max_length=255)
     description: str | None = None
-    github_repo: str = Field(..., examples=["acme/storefront"])
-    github_default_branch: str = Field("main", min_length=1, max_length=100)
     start_date: date | None = None
     end_date: date | None = None
 
-    _repo = field_validator("github_repo")(_validate_repo)
-
 
 class ProjectUpdate(BaseModel):
+    # github_repo stays editable only for projects created before TRACE made their repositories
     name: str | None = Field(None, min_length=2, max_length=255)
     description: str | None = None
     github_repo: str | None = None
@@ -127,6 +125,12 @@ class AssignmentResponse(BaseModel):
     project_role: str
     open_tasks: int
     assigned_at: datetime | None
+    warnings: list[str] = []
+
+
+class RemovalResponse(BaseModel):
+    project_role: str | None  # 'Member' when they still hold tasks here, else None (left the project)
+    warnings: list[str] = []
 
 
 # ── Task groups ──────────────────────────────────────────────────

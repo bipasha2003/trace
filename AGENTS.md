@@ -96,23 +96,24 @@ A task is not complete until the docs describe what the code now does.
 
 Base URL `http://localhost:8000/api/v1`, proxied by Vite.
 
-### Built (Phase 3)
+### Built (Phases 3, 3a)
 
 Platform role on the route, then the caller's project role from
 `app/core/project_access.py` — never re-derived inline.
 
 ```
 GET    /projects                             projects visible to the caller (+ stats, PMs, my_role)
-POST   /projects                             create (Manager)
+POST   /projects                             create (Manager) + its public repo <org>/<slug>; 409 on clash, 503 without token/org
 GET    /projects/activity                    recent task changes across visible projects
 GET    /projects/{id}                        detail: documents, source files, stats
 PATCH  /projects/{id}                        edit (owner Manager); 'Evaluating' is not settable
-DELETE /projects/{id}                        owner; refused while tasks are open
+DELETE /projects/{id}                        owner; refused while tasks are open; archives its repo first (502 → not deleted)
 POST   /projects/{id}/source-files           multi-file → MinIO + text extraction; rejects reported
 DELETE /projects/{id}/source-files/{fid}     owner
 GET    /projects/{id}/assignments            team with project roles
-POST   /projects/{id}/assignments            appoint Project Manager (owner)
-DELETE /projects/{id}/assignments/{uid}      remove PM (owner); keeps them as Member if they hold tasks
+POST   /projects/{id}/assignments            appoint Project Manager (owner) + repo invite; GitHub problems → `warnings`
+DELETE /projects/{id}/assignments/{uid}      remove PM (owner); keeps them as Member if they hold tasks,
+                                             else revokes repo access → { project_role, warnings }
 GET    /projects/{id}/candidates             active Employees (owner or PM)
 GET|POST          /projects/{id}/task-groups             list · create (PM)
 PATCH|DELETE      /projects/{id}/task-groups/{gid}       PM; delete refused while it has tasks
@@ -126,23 +127,22 @@ PATCH  /tasks/{id}/status                    completion authority enforced HERE
 DELETE /tasks/{id}                           soft delete + close issue as not planned (PM)
 GET    /tasks/health-summary                 Task Health totals (Admin)
 POST   /tasks/compute-health                 enqueue health recompute (Admin)
+GET    /admin/settings/github                org, committer; token only as token_set / token_source (Admin)
+PUT    /admin/settings/github                partial; token write-only — omitted keeps it, "" clears it (Admin)
+POST   /admin/settings/github/test           { ok, checks: [Token, Organization] } against the saved settings (Admin)
 ```
 
 ### To build
 
 | Module | Prefix | Purpose |
 |--------|--------|---------|
-| GitHub settings (Phase 3a) | `/admin/settings/github` | Owner + write-only token + test — [`docs/CORE.md`](docs/CORE.md) §4.1 |
 | Gantt | `/projects/{id}/gantt` | Latest chart + version history |
 | Discussions | `/tasks/{id}/discussions` | Per-task threads |
 | Notifications | `/notifications` | List, mark read, unread count |
-| Settings | `/admin/settings` | `system_settings` CRUD + connection tests |
+| Settings | `/admin/settings/{mail,ai,cicd}` | The other Configuration sections + connection tests (GitHub is built) |
 | Webhooks | `/webhooks/cicd` | HMAC-signed CI/CD receiver |
 
 ```
-GET   /admin/settings/github                 org, committer; token only as "set / not set"
-PUT   /admin/settings/github                 token is write-only
-POST  /admin/settings/github/test            token valid · organization visible
 POST  /projects/{id}/evaluate                enqueue evaluate_project
 GET   /projects/{id}/evaluate/status         job state
 GET   /projects/{id}/suggest-managers        AI-ranked PM candidates
@@ -162,7 +162,7 @@ POST  /webhooks/cicd                         CI/CD → AI completion resolution
 | Employees + designations | `/employees` | `api/v1/employees.py` |
 | HRMS (leaves, holidays, bulk upload) | `/hrms` | `api/v1/hrms.py` |
 | Attendance + shifts **records** (Admin) | `/attendance`, `/hrms` | Re-homed under Workforce |
-| Admin all-tables CRUD | `/admin` | `api/v1/admin.py` |
+| Admin all-tables CRUD | `/admin/tables` | `api/v1/admin.py` — every table **except `system_settings`** (secrets; served by `api/v1/settings.py`) |
 | Services / health / WS / MinIO / mail / LLM | `/services` | `api/v1/services.py` — Admin-only, except `/services/task/{id}/result`, which any signed-in role may poll |
 
 ### Remove
@@ -222,8 +222,19 @@ frontend/src/
   routes are `/health` and `/auth/{login,refresh,register}`.
 - **GitHub:** every call goes through `app/services/github_service.py`; every
   credential through `resolve_setting()` (database, then `.env`). Secrets are
-  **write-only** — no API ever returns one. Tests use the `fake_github` fixture;
-  an autouse fixture blocks real GitHub and MinIO in every test.
+  **write-only** — no API ever returns one. Secrets are written only through
+  `store_setting()` (Fernet, `SETTINGS_ENCRYPTION_KEY`) and read only through
+  `resolve_setting()`; never expose `system_settings` through a generic CRUD.
+  Tests use the `fake_github` fixture — it models repos, collaborators and
+  invitations, and like GitHub refuses a non-collaborator as issue assignee; an
+  autouse fixture blocks real GitHub and MinIO in every test, and `conftest.py`
+  pins `GITHUB_OWNER=acme`, an empty `GITHUB_TOKEN` and a test encryption key.
+  The one exception is `tests/test_github_live.py`: skipped unless
+  `TRACE_LIVE_GITHUB=1`, it reads the real `.env` and creates (then archives) a
+  public repo — run it only with the user's go-ahead, after changing GitHub code.
+- GitHub side effects that grant or revoke *access* (collaborator invites) never
+  fail the change that caused them — return a `warnings` list. Side effects that
+  *are* the record (repo ↔ project, issue ↔ task) do: no repo, no project.
 - A task and its GitHub issue change together or not at all: call GitHub *before*
   committing, and roll back explicitly if it fails.
 - Responses tell the UI what the caller may do (`can_edit`, `allowed_statuses`),
@@ -312,6 +323,7 @@ const poll = setInterval(async () => {
 cd frontend && npm run dev
 cd backend && source .venv/bin/activate && uvicorn app.main:app --reload --port 8000
 cd backend && .venv/bin/python -m pytest -q   # own DB `trace_test`, migrated by Alembic
+cd backend && TRACE_LIVE_GITHUB=1 .venv/bin/python -m pytest -q tests/test_github_live.py -s  # real GitHub; leaves an archived repo
 ```
 
 | Service | URL | Credentials |

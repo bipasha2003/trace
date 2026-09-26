@@ -100,8 +100,8 @@ redeploy needed.
 
 ### GitHub
 
-Every task in TRACE **is** a GitHub issue, so TRACE needs GitHub access before
-anyone can create a task. It works as **one company GitHub account**, not as
+Every project in TRACE owns a GitHub repository and every task **is** a GitHub
+issue, so TRACE needs GitHub access before anyone can create a project. It works as **one company GitHub account**, not as
 individual users:
 
 1. Create a GitHub **Organization** for the company. Personal accounts are not
@@ -109,17 +109,31 @@ individual users:
    and generated documents. Never put secrets in requirement documents.
 2. Create a **fine-grained personal access token** limited to that organization,
    with *Administration*, *Contents* and *Issues* set to read/write and *Metadata*
-   set to read. Don't use a classic full-access token.
-3. Give the token to TRACE. **Admin → Configuration → GitHub** is where this will
-   happen (planned). Until that screen exists, set `GITHUB_TOKEN` in `.env`.
-   Optionally set `GITHUB_COMMITTER_NAME` / `GITHUB_COMMITTER_EMAIL` for the commits
-   TRACE makes.
-4. Each person who works on tasks sets their **GitHub username** under Profile, so
-   issues can be assigned to them.
+   set to read. Don't use a classic full-access token. Give it an expiry of
+   **366 days or less** — organizations can refuse longer-lived tokens, and
+   TRACE's organization does (Test connection shows GitHub's 403).
+3. Make sure `SETTINGS_ENCRYPTION_KEY` is set in `.env` — the token is stored
+   encrypted with it. Generate one with
+   `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
+   Changing it later makes the saved token unreadable; enter the token again.
+4. As Admin, open **Admin → Configuration → GitHub**: enter the organization, the
+   token and (optionally) the committer name and email for the commits TRACE makes,
+   **Save**, then **Test connection**. The token is never shown again — only
+   whether it is set. (`GITHUB_OWNER` / `GITHUB_TOKEN` / `GITHUB_COMMITTER_*` in
+   `.env` work as fallbacks.)
+5. Each person who works on tasks sets their **GitHub username** under Profile.
 
-Planned (see `docs/CORE.md` §4.1): TRACE will create each project's public
-repository under the organization, and invite project members as collaborators. Until then a
-Manager enters an existing `owner/repo` when creating a project.
+When a Manager creates a project, TRACE creates the public repository
+`<organization>/<project-name-slug>`; a name that is already taken is refused, never
+reused. Appointing a Project Manager or assigning someone a task invites them to that
+repository with *Write* — they must **accept GitHub's email invitation** before issues
+can be assigned to them on GitHub (until then TRACE creates the issue unassigned and
+says so; assign it again once they have accepted). Removing a Project Manager who holds
+no tasks revokes their access. To check the whole integration against your real
+organization, run `TRACE_LIVE_GITHUB=1 .venv/bin/python -m pytest -q tests/test_github_live.py -s`
+in `backend/` — it creates one public `trace-smoke-<timestamp>` repo and leaves it
+archived. Deleting a project **archives** its repository (it is
+never deleted, so its name stays taken).
 
 ---
 
@@ -136,7 +150,8 @@ then does this:
 | Demo users + demo project | seeded | **not** seeded |
 
 **Production refuses to start** when `CLOUDFLARE_TUNNEL_TOKEN` or `PRODUCTION_URL` is
-empty, `DEBUG` is true, `JWT_SECRET_KEY` is a placeholder, or any account still has
+empty, `DEBUG` is true, `JWT_SECRET_KEY` is a placeholder, `SETTINGS_ENCRYPTION_KEY`
+is missing or not a Fernet key, or any account still has
 its published seed password (`admin@trace.com` / `Admin@123` and the others). Fix
 the last one with `./start.sh set-password <email>`.
 

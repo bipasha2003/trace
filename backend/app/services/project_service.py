@@ -1,8 +1,10 @@
 """
 TRACE - Project and task service (Phase 3, no AI)
 
-Holds the rules the routers share: project summaries and stats, the task ↔ GitHub
-issue lifecycle, task-group roll-ups, and Member creation on first assignment.
+Holds the rules the routers share: project creation with its GitHub repository,
+project summaries and stats, repository access for the people on a project, the
+task ↔ GitHub issue lifecycle, task-group roll-ups, and Member creation on first
+assignment.
 Authorisation is decided before these are called (app.core.project_access).
 """
 
@@ -17,7 +19,7 @@ from app.exceptions import NotFoundException, TraceException
 from app.models.project import Notification, Project, ProjectAssignment, ProjectSourceFile, TaskGroup
 from app.models.task import Task
 from app.models.user import User, UserRole
-from app.services.github_service import GitHubClient
+from app.services.github_service import GitHubClient, GitHubError, repo_slug
 
 OPEN_STATUSES = ("Pending", "In Progress", "In Review", "Blocked", "Overdue")
 
@@ -30,6 +32,34 @@ def person(user: User | None) -> dict | None:
 
 
 # ── Projects ─────────────────────────────────────────────────────
+
+async def create_project(db: AsyncSession, user: User, data, github: GitHubClient, owner: str) -> Project:
+    """TRACE creates the project's public repository itself (CORE.md §4.1): both exist, or neither."""
+    slug = repo_slug(data.name)
+    if not slug:
+        raise TraceException(422, "The project name needs at least one letter or digit to name its repository")
+    repo = await github.create_repo(owner, slug, data.description)  # before any row exists
+    project = Project(created_by_user_id=user.id, status="Draft", name=data.name,
+                      description=data.description, start_date=data.start_date, end_date=data.end_date,
+                      github_repo=repo.full_name, github_default_branch=repo.default_branch)
+    db.add(project)
+    await db.commit()
+    return project
+
+
+async def delete_project(db: AsyncSession, project: Project, github: GitHubClient | None, owner: str) -> None:
+    """Soft-delete the project and archive its repository — together or not at all.
+
+    Only a repository under the configured organization is archived: one entered by hand
+    before Phase 3a may belong to someone else, and is left alone.
+    """
+    repo = project.github_repo
+    if repo and owner and repo.split("/")[0].lower() == owner.lower():
+        from app.services.github_service import require_github
+        await require_github(github).archive_repo(repo)  # before the row changes
+    project.deleted_at = datetime.now(timezone.utc)
+    await db.commit()
+
 
 async def project_stats(db: AsyncSession, project_ids: list[int]) -> dict[int, dict]:
     if not project_ids:
@@ -155,8 +185,45 @@ async def active_employee(db: AsyncSession, user_id: int) -> User:
     return user
 
 
-async def ensure_member(db: AsyncSession, project_id: int, user_id: int, assigned_by: int) -> None:
-    """First task assignment grants project membership (PLANNING.md Q8). A PM stays a PM."""
+async def grant_repo_access(github: GitHubClient | None, project: Project, user: User) -> list[str]:
+    """Invite someone joining the project to its repository with Write (CORE.md §4.1).
+
+    Never fails the change that triggered it: a problem comes back as a warning.
+    """
+    if not project.github_repo:
+        return []
+    if not user.github_username:
+        return [f"{user.name} has no GitHub username, so they were not given access to {project.github_repo}"]
+    if github is None:
+        return [f"GitHub is not configured, so {user.name} was not given access to {project.github_repo}"]
+    try:
+        await github.add_collaborator(project.github_repo, user.github_username)
+    except GitHubError as exc:
+        return [f"{user.name} was not given access to {project.github_repo}: {exc.detail}"]
+    return []
+
+
+async def revoke_repo_access(github: GitHubClient | None, project: Project, user: User) -> list[str]:
+    """Someone left the project: remove their Write access, or withdraw the pending invitation."""
+    if not project.github_repo or not user.github_username:
+        return []
+    if github is None:
+        return [f"GitHub is not configured, so {user.name}'s access to {project.github_repo} was not removed"]
+    try:
+        await github.remove_collaborator(project.github_repo, user.github_username)
+    except GitHubError as exc:
+        return [f"{user.name}'s access to {project.github_repo} was not removed: {exc.detail}"]
+    return []
+
+
+async def ensure_member(db: AsyncSession, project: Project, user: User, assigned_by: int,
+                        github: GitHubClient | None) -> list[str]:
+    """First task assignment grants project membership (PLANNING.md Q8). A PM stays a PM.
+
+    Every assignment (re-)invites the assignee to the repository — idempotent on GitHub's
+    side, and it heals an earlier invitation that failed. Returns warnings.
+    """
+    project_id, user_id = project.id, user.id
     existing = (await db.execute(
         select(ProjectAssignment).where(ProjectAssignment.project_id == project_id,
                                         ProjectAssignment.user_id == user_id)
@@ -169,6 +236,7 @@ async def ensure_member(db: AsyncSession, project_id: int, user_id: int, assigne
         existing.project_role = MEMBER
         existing.assigned_by_user_id = assigned_by
     await db.flush()
+    return await grant_repo_access(github, project, user)
 
 
 def notify_assignment(db: AsyncSession, task: Task, project: Project, assignee_id: int) -> None:
@@ -255,6 +323,25 @@ async def recompute_group(db: AsyncSession, group_id: int | None) -> None:
         group.status = "Pending"
 
 
+def _pending_invitation(assignee: User, project: Project) -> str:
+    return (f"GitHub would not assign the issue to {assignee.github_username} — their invitation to "
+            f"{project.github_repo} is probably not accepted yet — so it was left unassigned. "
+            f"Assign the task again once they have accepted")
+
+
+async def _open_issue(github: GitHubClient, project: Project, task: Task,
+                      assignee: User | None) -> tuple[object, list[str]]:
+    """Create the issue; if GitHub rejects the assignee, create it unassigned and warn."""
+    assignees = [assignee.github_username] if assignee and assignee.github_username else []
+    try:
+        return await github.create_issue(project.github_repo, task.title, issue_body(task, project), assignees), []
+    except GitHubError as exc:
+        if not (assignees and exc.github_status == 422):
+            raise
+    issue = await github.create_issue(project.github_repo, task.title, issue_body(task, project), [])
+    return issue, [_pending_invitation(assignee, project)]
+
+
 def _issue_number(task: Task) -> int | None:
     return int(task.github_issue_id) if task.github_issue_id and task.github_issue_id.isdigit() else None
 
@@ -277,21 +364,19 @@ async def create_task(db: AsyncSession, access: ProjectAccess, data, github: Git
     db.add(task)
     await db.flush()
 
-    assignees = []
-    if assignee:
-        if assignee.github_username:
-            assignees = [assignee.github_username]
-        else:
-            warnings.append(f"{assignee.name} has no GitHub username, so the issue was left unassigned")
     try:
-        issue = await github.create_issue(project.github_repo, task.title, issue_body(task, project), assignees)
+        if assignee:  # invite first, so the issue can be assigned to them
+            warnings += await ensure_member(db, project, assignee, access.user.id, github)
+            if not assignee.github_username:
+                warnings = [f"{assignee.name} has no GitHub username, so the issue was left unassigned"]
+        issue, issue_warnings = await _open_issue(github, project, task, assignee)
     except Exception:
         await db.rollback()  # no issue → no task; never rely on the caller to undo the flush
         raise
+    warnings += issue_warnings
     task.github_issue_id, task.github_issue_url = str(issue.number), issue.url
 
     if assignee:
-        await ensure_member(db, project.id, assignee.id, access.user.id)
         notify_assignment(db, task, project, assignee.id)
     await recompute_group(db, group.id)
     await db.commit()
@@ -314,22 +399,28 @@ async def update_task(db: AsyncSession, access: ProjectAccess, task: Task, data)
 
 async def assign_task(db: AsyncSession, access: ProjectAccess, task: Task, user_id: int | None,
                       github: GitHubClient) -> tuple[Task, list[str]]:
-    warnings, assignees = [], []
+    warnings, assignees, project = [], [], access.project
     assignee = await active_employee(db, user_id) if user_id else None
     if assignee:
+        warnings += await ensure_member(db, project, assignee, access.user.id, github)
         if assignee.github_username:
             assignees = [assignee.github_username]
         else:
-            warnings.append(f"{assignee.name} has no GitHub username, so the issue was left unassigned")
+            warnings = [f"{assignee.name} has no GitHub username, so the issue was left unassigned"]
     number = _issue_number(task)
     if number is not None:
-        await github.set_assignees(access.project.github_repo, number, assignees)
+        try:
+            await github.set_assignees(project.github_repo, number, assignees)
+        except GitHubError as exc:
+            if not (assignees and exc.github_status == 422):
+                raise
+            await github.set_assignees(project.github_repo, number, [])
+            warnings.append(_pending_invitation(assignee, project))
 
     task.assigned_to_user_id = assignee.id if assignee else None
     task.assigned_by_user_id = access.user.id if assignee else None
     if assignee:
-        await ensure_member(db, access.project.id, assignee.id, access.user.id)
-        notify_assignment(db, task, access.project, assignee.id)
+        notify_assignment(db, task, project, assignee.id)
     await db.commit()
     return await load_task(db, task.id), warnings
 

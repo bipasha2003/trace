@@ -18,41 +18,83 @@
 | 1 · Schema | ✅ |
 | 2 · Panels, landing, route guards | ✅ |
 | 3 · Projects, without AI | ✅ built and tested — see its status note for what is unverified |
-| **3a · GitHub owner model** | 🔲 **next.** Fully specified below; Q12 and Q13 are answered, nothing is blocking it |
-| 4 – 9 | 🔲 not started. Phase 8 may run in parallel |
+| 3a · GitHub owner model | ✅ built, tested, and verified against real GitHub (opt-in live test) |
+| **4 · Visualisation** | 🔲 **next** — read *Starting Phase 4* below |
+| 5 – 9 | 🔲 not started. Phase 8 may run in parallel |
 
 **Verify before you trust this table** — facts that change outside the docs:
 - `git log --oneline -5` and `git status` — what is committed; untracked files are
   how Phase 2 once went missing from `main`.
-- `cd backend && .venv/bin/python -m pytest -q` — 232 passing at handoff. The suite
+- `cd backend && .venv/bin/python -m pytest -q` — 281 passing and 2 skipped at handoff (the skips are the opt-in live GitHub test). The suite
   uses its own `trace_test` database (built by Alembic) and fakes GitHub and MinIO,
-  so it is safe to run anywhere.
+  so it is safe to run anywhere — but it needs the Compose `db` **and** `redis`
+  services up (`docker compose up -d db redis`); without Redis three job-poll tests
+  fail.
 - `cd frontend && npm run build` — must pass.
 
 **Environment traps**
-- **Production may be running on the development machine**, from the same working
-  tree and the **same database** (`APP_ENV=production` in the root `.env`, served at
-  `PRODUCTION_URL` through the Cloudflare tunnel — README → Production). Before
-  running `./start.sh`, `alembic upgrade` against the main database, or anything that
-  binds ports 5173 / 8000, check `./start.sh status` and ask the user. Production does
-  not hot-reload: code changes go live only on restart. At handoff, the running
-  production process predates Phase 3.
-- The root `.env` is the only env file (AGENTS.md §4). `GITHUB_TOKEN` is empty at
-  handoff, so creating a task answers 503 until Phase 3a or a token in `.env`.
+- **Develop and test locally only.** The user tests production themselves — do not
+  check, restart or deploy it. Production can run from this same working tree and
+  database (README → Production), so before `./start.sh` or anything binding ports
+  5173 / 8000, check `./start.sh status`; `APP_ENV=local` at handoff.
+- The root `.env` is the only env file (AGENTS.md §4). It holds the real
+  `GITHUB_OWNER=trace-organization` and a real `GITHUB_TOKEN` — never print them.
+  Tests pin their own values (`conftest.py`) and can never reach real GitHub.
+- The local database's demo project (id 1) points at
+  `trace-organization/trace-platform`, a repo the user created by hand.
+- `SETTINGS_ENCRYPTION_KEY` was generated into the root `.env` by Phase 3a.
+  Production now refuses to start without it, and **changing it makes every saved
+  secret unreadable** (re-enter them). Don't regenerate it casually.
+- `cryptography` was added to `requirements.txt` — reinstall the venv
+  (`pip install -r requirements.txt`) on any other checkout before starting.
 - Only the Admin can create Admin / Manager accounts. Production does not seed demo
   users, and refuses to start while any seeded account still has its published
   password — change them with `./start.sh set-password <email>` (README → Production).
 
-**Known gaps, deliberately left** (each is also in its phase or `PROJECT.md` §24)
-- Phase 3 screens have never been clicked through in a browser — do that first when
-  a free port is available, using the tests' flows as the script.
+**Known gaps** (each is also in its phase or `PROJECT.md` §24)
+- **Real GitHub is verified** against `trace-organization` (owner account
+  `trace-personal`) by the opt-in `tests/test_github_live.py`: connection test,
+  project → public repo, name clash 409, document commits, issue assign / unassign /
+  close, project delete → repo archived. Run it with
+  `TRACE_LIVE_GITHUB=1 .venv/bin/python -m pytest -q tests/test_github_live.py -s`;
+  **each run leaves one archived public `trace-smoke-<timestamp>` repo** — ask the user
+  before running it. Still not exercised for real: a collaborator invitation to
+  another account (set `TRACE_LIVE_GITHUB_INVITEE=<username>` to include it).
+- If the database commit fails right after GitHub created a repo, the repo is left
+  behind (the token cannot delete). Rare; clean up by hand.
+- There is no delete-project button — `DELETE /projects/{id}` is API-only.
+
+*Owned by later phases, not gaps in 0–3a:*
 - `services/scoring_service.py` still reads the dropped `Task.assigned_to` —
-  `/productivity/compute*` will fail until Phase 5 step 3 re-bases scoring.
-- `components/ServiceMonitor.jsx` (opened from the Admin header) links to Mailpit,
-  MinIO and pgAdmin at `localhost`, which is wrong on the public URL — Phase 8.
+  `/productivity/compute*` fails until Phase 5 step 3 re-bases scoring.
+- `components/ServiceMonitor.jsx` links to Mailpit / MinIO / pgAdmin at `localhost` — Phase 8.
 - Tree, Gantt, Progress Report and Project Doc tabs are placeholders — Phases 4–5.
 - Old pages `AttendancePage`, `EmployeesPage`, `ProductivityPage`, `AdminPanelPage`,
   `FilesPage`, `SettingsPage` are unrouted; Phase 8 rebuilds or deletes them.
+
+*Not planned* (user decision, `PLANNING.md` §4): removing Members from a project,
+a resend-invitation action. Don't build them unasked.
+
+**Starting Phase 4** — what the phase text below does not tell you
+- **`gantt_charts.chart_data` has no defined shape.** PROJECT.md §11.5 says only
+  "bars, dependencies, milestones". The Gantt is CORE territory, so **define the JSON
+  schema in `CORE.md` §5 first** (one bar per task group with planned start/end and
+  completion, expandable task rows, dependency pairs, milestones), then build to it.
+  Phase 5's `reevaluate_gantt` will have to produce exactly that shape and validate
+  against it (AGENTS.md §4), so keep it small and explicit.
+- **The tree needs no new data** — project → `task_groups` → `tasks` already carry
+  status, assignee and `github_issue_url`. `GET /projects/{id}/tree` is a read over
+  them, guarded by `resolve_project_access` like every project route; add it (and the
+  Gantt route) to the role matrix in `tests/api/v1/test_route_guards.py`.
+- **No graph or pan/zoom library is installed** (only `recharts`, which suits neither
+  a tree nor a Gantt well). Choosing one — e.g. `@xyflow/react` for the tree — is a
+  decision to log in `PLANNING.md` §2. It must render with shadcn tokens in both themes.
+- **Gantt data before Phase 5:** "Done when" allows a hand-written `chart_data` row.
+  Build it from the project's task groups (they have `planned_start_date`,
+  `planned_end_date`, `completion_percentage`) so the demo project shows something real.
+- Both views replace placeholder tabs that already exist in the Manager and
+  Employee project pages (`components/project/NotYetAvailable.jsx` is the
+  placeholder); read-only everywhere, and for Members.
 
 ---
 
@@ -299,7 +341,7 @@ logged-out visitor sees the landing page.
 
 *Status: built and tested 2026-09-26 (232 backend tests; frontend builds). Not yet
 checked in a browser — production occupies the local ports — and not yet live until
-production restarts. Step 3's repository and credential handling is being reworked
+production restarts. Step 3's repository and credential handling was reworked
 by **Phase 3a** below.*
 
 - *Backend:* `api/v1/projects.py` (projects, source files, team, candidates, task
@@ -343,7 +385,28 @@ create tasks that appear as GitHub issues — with no AI involved at all.
 
 ---
 
-## Phase 3a — GitHub owner model
+## Phase 3a — GitHub owner model ✅
+
+*Status: built and tested 2026-09-26 (277 backend tests; frontend builds). Tested
+only against the fake GitHub in `tests/conftest.py`, never real GitHub; not yet
+clicked through in a browser (not required). Where the build differs from the steps below: the
+create form also lost its default-branch field (the branch comes from GitHub);
+collaborator problems are warnings, never failures; `system_settings` left the
+Control Panel's generic CRUD; removing a PM answers 200 `{project_role, warnings}`
+— all logged in [`PLANNING.md`](PLANNING.md) §2 / §5.*
+
+- *Backend:* `api/v1/settings.py` (Admin); `services/system_settings.py` gains
+  `store_setting` / `setting_source` and Fernet encryption; `github_service.py`
+  gains `repo_slug`, `create_repo`, `add_collaborator`, `remove_collaborator`,
+  `authenticated_login`, `organization`, `resolve_owner`; `project_service.py`
+  gains `create_project`, `grant_repo_access`, `revoke_repo_access` and the
+  unassigned-issue fallback.
+- *Frontend:* `pages/admin/ConfigurationPage.jsx` (GitHub section), `api/settings.js`,
+  `ProjectCreatePage.jsx` (slug preview, public notice), `TeamPanel.jsx` (warnings).
+- *Tests:* `tests/api/v1/test_settings.py`; Phase 3a block in `test_projects.py`.
+- *Follow-up (same day):* deleting a project archives its repository; Phase 0
+  leftovers removed (`core/geolocation.py`, `services/attendance_service.py`,
+  `layouts/DashboardLayout.jsx`, `layouts/Header.jsx`); demo seed uses the real org.
 
 **Read [`CORE.md`](CORE.md) §4.1 first.** Decided 2026-09-26: TRACE uses one
 company GitHub **Organization** (Q12) and one token, entered by the Admin, and

@@ -14,23 +14,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.permissions import RoleEnum, require_any_role, require_roles
 from app.core.project_access import (
-    MEMBER, PROJECT_MANAGER, ProjectAccess, platform_roles, resolve_project_access,
+    MEMBER, PROJECT_MANAGER, ProjectAccess, resolve_project_access,
 )
 from app.database import get_db
 from app.exceptions import NotFoundException, TraceException
-from app.models.project import Project, ProjectAssignment, ProjectSourceFile, TaskGroup
+from app.models.project import ProjectAssignment, ProjectSourceFile, TaskGroup
 from app.models.task import Task
 from app.models.user import Role, User, UserRole
 from app.schemas.project import (
     ActivityItem, AssignmentResponse, AssignProjectManager, PersonBrief, ProjectCreate,
-    ProjectDetail, ProjectSummary, ProjectUpdate, SourceFileUploadResponse, TaskCreate,
+    ProjectDetail, ProjectSummary, ProjectUpdate, RemovalResponse, SourceFileUploadResponse, TaskCreate,
     TaskGroupCreate, TaskGroupResponse, TaskGroupUpdate, TaskMutationResponse, TaskResponse,
 )
 from app.services import project_service as svc
 from app.services.extraction import (
     MAX_SOURCE_FILE_BYTES, UnsupportedFile, extension_of, extract_text,
 )
-from app.services.github_service import GitHubClient, get_github_client, require_github
+from app.services.github_service import GitHubClient, get_github_client, require_github, resolve_owner
 from app.services.storage import ObjectStorage, get_storage
 
 router = APIRouter(prefix="/projects", tags=["Projects"], dependencies=[Depends(require_any_role)])
@@ -55,15 +55,16 @@ async def list_projects(user: User = Depends(require_any_role), db: AsyncSession
 
 
 @router.post("", response_model=ProjectDetail, status_code=status.HTTP_201_CREATED,
-             summary="Create a project (Manager)")
+             summary="Create a project and its GitHub repository (Manager)")
 async def create_project(
     data: ProjectCreate,
     user: User = Depends(require_roles(RoleEnum.MANAGER)),
+    github: GitHubClient | None = Depends(get_github_client),
     db: AsyncSession = Depends(get_db),
 ):
-    project = Project(created_by_user_id=user.id, status="Draft", **data.model_dump())
-    db.add(project)
-    await db.commit()
+    """The repository is public and named after the project; a name clash is a 409, never reused."""
+    github = require_github(github)
+    project = await svc.create_project(db, user, data, github, await resolve_owner(db))
     return await svc.project_detail(db, await resolve_project_access(db, user, project.id))
 
 
@@ -109,8 +110,14 @@ async def update_project(
     return await svc.project_detail(db, access)
 
 
-@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete a project (owner)")
-async def delete_project(access: ProjectAccess = Depends(project_access), db: AsyncSession = Depends(get_db)):
+@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT,
+               summary="Delete a project and archive its repository (owner)")
+async def delete_project(
+    access: ProjectAccess = Depends(project_access),
+    github: GitHubClient | None = Depends(get_github_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Refused while tasks are open. The repository is archived, not deleted — its name stays taken."""
     access.require_owner()
     open_tasks = (await db.execute(
         select(func.count(Task.id)).where(Task.project_id == access.project.id, Task.deleted_at.is_(None),
@@ -118,8 +125,8 @@ async def delete_project(access: ProjectAccess = Depends(project_access), db: As
     )).scalar()
     if open_tasks:
         raise TraceException(409, f"{open_tasks} open task(s) — archive the project instead, or close them first")
-    access.project.deleted_at = datetime.now(timezone.utc)
-    await db.commit()
+    from app.services.system_settings import resolve_setting
+    await svc.delete_project(db, access.project, github, await resolve_setting(db, "github", "owner"))
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -214,8 +221,10 @@ async def list_assignments(access: ProjectAccess = Depends(project_access), db: 
 async def assign_project_manager(
     data: AssignProjectManager,
     access: ProjectAccess = Depends(project_access),
+    github: GitHubClient | None = Depends(get_github_client),
     db: AsyncSession = Depends(get_db),
 ):
+    """Also invites them to the project's repository with Write; a GitHub problem is a warning."""
     access.require_owner()
     employee = await svc.active_employee(db, data.user_id)
     row = (await db.execute(
@@ -228,20 +237,23 @@ async def assign_project_manager(
     elif row.project_role == PROJECT_MANAGER and row.deleted_at is None:
         raise TraceException(409, f"{employee.name} is already a Project Manager on this project")
     row.project_role, row.deleted_at, row.assigned_by_user_id = PROJECT_MANAGER, None, access.user.id
+    warnings = await svc.grant_repo_access(github, access.project, employee)
     await db.commit()
     await db.refresh(row)
     return {"user": svc.person(employee), "project_role": PROJECT_MANAGER, "open_tasks": 0,
-            "assigned_at": row.created_at}
+            "assigned_at": row.created_at, "warnings": warnings}
 
 
-@router.delete("/{project_id}/assignments/{user_id}", status_code=status.HTTP_204_NO_CONTENT,
+@router.delete("/{project_id}/assignments/{user_id}", response_model=RemovalResponse,
                summary="Remove a Project Manager (owner)")
 async def remove_project_manager(
     user_id: int,
     access: ProjectAccess = Depends(project_access),
+    github: GitHubClient | None = Depends(get_github_client),
     db: AsyncSession = Depends(get_db),
 ):
-    """A removed PM who still holds tasks here stays on as a Member; otherwise they leave the project."""
+    """A removed PM who still holds tasks here stays on as a Member; otherwise they leave the
+    project, and their repository access (or pending invitation) is revoked."""
     access.require_owner()
     row = (await db.execute(
         select(ProjectAssignment).where(ProjectAssignment.project_id == access.project.id,
@@ -255,11 +267,14 @@ async def remove_project_manager(
         select(func.count(Task.id)).where(Task.project_id == access.project.id,
                                           Task.assigned_to_user_id == user_id, Task.deleted_at.is_(None))
     )).scalar()
+    warnings = []
     if holds_tasks:
         row.project_role = MEMBER
     else:
         row.deleted_at = datetime.now(timezone.utc)
+        warnings = await svc.revoke_repo_access(github, access.project, await db.get(User, user_id))
     await db.commit()
+    return {"project_role": MEMBER if holds_tasks else None, "warnings": warnings}
 
 
 @router.get("/{project_id}/candidates", response_model=list[PersonBrief],

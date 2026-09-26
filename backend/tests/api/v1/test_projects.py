@@ -37,7 +37,8 @@ class World:
 
 
 @pytest.fixture
-async def world(client: AsyncClient, db_session: AsyncSession) -> World:
+async def world(client: AsyncClient, db_session: AsyncSession, fake_github: FakeGitHub) -> World:
+    """Creating a project creates its repository, so every world has a (fake) GitHub."""
     _, manager = await make_user(db_session, "Manager", "mgr_one")
     _, other_manager = await make_user(db_session, "Manager", "mgr_two")
     _, admin = await make_user(db_session, "Admin", "the_admin")
@@ -47,7 +48,7 @@ async def world(client: AsyncClient, db_session: AsyncSession) -> World:
     _, outsider = await make_user(db_session, "Employee", "out_omar")
 
     resp = await client.post(f"{API}/projects", headers=manager, json={
-        "name": "Storefront", "description": "Online shop", "github_repo": "acme/storefront",
+        "name": "Storefront", "description": "Online shop",
     })
     assert resp.status_code == 201, resp.text
     project_id = resp.json()["id"]
@@ -94,25 +95,173 @@ async def test_manager_to_pm_to_github_issue(client: AsyncClient, world: World, 
 
 @pytest.mark.parametrize("who", ["admin", "pm"])
 async def test_only_managers_create_projects(client: AsyncClient, world: World, who: str):
-    resp = await client.post(f"{API}/projects", headers=getattr(world, who),
-                             json={"name": "Nope", "github_repo": "acme/nope"})
+    resp = await client.post(f"{API}/projects", headers=getattr(world, who), json={"name": "Nope"})
     assert resp.status_code == 403
+
+
+# ══════════════════════════════════════════════════════════════════
+#  Phase 3a — TRACE creates each project's repository (CORE.md §4.1)
+# ══════════════════════════════════════════════════════════════════
+
+async def test_project_repo_is_created_public_under_the_organization(client: AsyncClient, world: World,
+                                                                      fake_github: FakeGitHub):
+    resp = await client.post(f"{API}/projects", headers=world.manager,
+                             json={"name": "Mobile App: v2 (Beta)!", "description": "Line one\nline two",
+                                   "github_repo": "someone/else"})  # ignored — not the Manager's to choose
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["github_repo"] == "acme/mobile-app-v2-beta"
+    assert resp.json()["github_default_branch"] == "main" and resp.json()["status"] == "Draft"
+    repo = fake_github.repos["acme/mobile-app-v2-beta"]
+    assert repo["private"] is False and repo["auto_init"] is True and repo["has_issues"] is True
+    assert repo["description"] == "Line one line two"
+
+
+@pytest.mark.parametrize("name,slug", [
+    ("Storefront", "storefront"), ("  Hello   World  ", "hello-world"), ("ÉCOLE 2026", "cole-2026"),
+    ("a" * 150, "a" * 100),
+])
+def test_repo_slug(name, slug):
+    from app.services.github_service import repo_slug
+    assert repo_slug(name) == slug
+
+
+async def test_name_without_letters_or_digits_is_refused(client: AsyncClient, world: World):
+    resp = await client.post(f"{API}/projects", headers=world.manager, json={"name": "!!!"})
+    assert resp.status_code == 422 and "letter or digit" in resp.json()["detail"]
+
+
+async def test_repo_name_clash_is_reported_not_reused(client: AsyncClient, world: World, fake_github):
+    fake_github.add_repo("acme/billing")
+    resp = await client.post(f"{API}/projects", headers=world.manager, json={"name": "Billing"})
+    assert resp.status_code == 409 and "acme/billing" in resp.json()["detail"]
+    names = [p["name"] for p in (await client.get(f"{API}/projects", headers=world.manager)).json()]
+    assert "Billing" not in names
+
+
+async def test_no_github_means_no_project(client: AsyncClient, world: World):
+    from app.main import app
+    from app.services.github_service import get_github_client
+    app.dependency_overrides[get_github_client] = lambda: None
+    resp = await client.post(f"{API}/projects", headers=world.manager, json={"name": "Offline"})
+    assert resp.status_code == 503 and "GitHub is not configured" in resp.json()["detail"]
+
+
+async def test_no_organization_means_no_project(client: AsyncClient, world: World, monkeypatch):
+    from app.config import get_settings
+    monkeypatch.setattr(get_settings(), "GITHUB_OWNER", "")
+    resp = await client.post(f"{API}/projects", headers=world.manager, json={"name": "Orgless"})
+    assert resp.status_code == 503 and "organization" in resp.json()["detail"]
+
+
+async def test_organization_from_configuration_wins(client: AsyncClient, world: World, fake_github):
+    fake_github.orgs.add("globex")
+    await client.put(f"{API}/admin/settings/github", headers=world.admin, json={"owner": "globex"})
+    resp = await client.post(f"{API}/projects", headers=world.manager, json={"name": "Portal"})
+    assert resp.json()["github_repo"] == "globex/portal"
+
+
+async def test_token_without_repo_rights_gets_a_precise_message(client: AsyncClient, world: World, fake_github):
+    fake_github.fail_with = 403
+    resp = await client.post(f"{API}/projects", headers=world.manager, json={"name": "Locked"})
+    assert resp.status_code == 502 and "Administration: read and write" in resp.json()["detail"]
+
+
+async def test_github_failure_means_no_project(client: AsyncClient, world: World, fake_github):
+    fake_github.fail_with = 500
+    resp = await client.post(f"{API}/projects", headers=world.manager, json={"name": "Doomed"})
+    assert resp.status_code == 502
+    fake_github.fail_with = None
+    names = [p["name"] for p in (await client.get(f"{API}/projects", headers=world.manager)).json()]
+    assert "Doomed" not in names
 
 
 @pytest.mark.parametrize("repo,expected", [
     ("https://github.com/acme/app.git", "acme/app"), ("acme/app", "acme/app"),
 ])
-async def test_repo_is_normalised(client: AsyncClient, world: World, repo, expected):
-    resp = await client.post(f"{API}/projects", headers=world.manager, json={"name": "Repo", "github_repo": repo})
-    assert resp.status_code == 201
-    assert resp.json()["github_repo"] == expected
-    assert resp.json()["status"] == "Draft"
+async def test_repo_of_an_older_project_stays_editable(client: AsyncClient, world: World, repo, expected):
+    resp = await client.patch(f"{API}/projects/{world.project_id}", headers=world.manager, json={"github_repo": repo})
+    assert resp.status_code == 200 and resp.json()["github_repo"] == expected
 
 
-@pytest.mark.parametrize("repo", ["not a repo", "acme", "acme/app/extra", ""])
+@pytest.mark.parametrize("repo", ["not a repo", "acme", "acme/app/extra"])
 async def test_bad_repo_is_rejected(client: AsyncClient, world: World, repo):
-    resp = await client.post(f"{API}/projects", headers=world.manager, json={"name": "Repo", "github_repo": repo})
+    resp = await client.patch(f"{API}/projects/{world.project_id}", headers=world.manager, json={"github_repo": repo})
     assert resp.status_code == 422
+
+
+# ── Repository access follows project membership ────────────────
+
+async def test_pm_is_invited_with_write_on_appointment(world: World, fake_github: FakeGitHub):
+    assert "priya-gh" in fake_github.collaborators["acme/storefront"]
+    put = [r for r in fake_github.requests if r[0] == "PUT" and r[1].endswith("/collaborators/priya-gh")]
+    assert put and put[0][2] == {"permission": "push"}
+
+
+async def test_pm_without_github_username_is_appointed_with_a_warning(client: AsyncClient, world: World):
+    resp = await client.post(f"{API}/projects/{world.project_id}/assignments", headers=world.manager,
+                             json={"user_id": world.newbie_id})
+    assert resp.status_code == 201
+    assert "no GitHub username" in resp.json()["warnings"][0]
+
+
+async def test_github_refusing_the_invitation_does_not_block_the_appointment(client: AsyncClient, world: World,
+                                                                             fake_github):
+    fake_github.fail_with = 500
+    resp = await client.post(f"{API}/projects/{world.project_id}/assignments", headers=world.manager,
+                             json={"user_id": world.dev_id})
+    assert resp.status_code == 201 and "was not given access" in resp.json()["warnings"][0]
+
+
+async def test_first_assignment_invites_the_member(client: AsyncClient, world: World, fake_github):
+    await _task(client, world, await _group(client, world), assignee=world.dev_id)
+    assert "dan-gh" in fake_github.collaborators["acme/storefront"]
+
+
+async def test_pending_invitation_leaves_the_issue_unassigned(client: AsyncClient, world: World, fake_github):
+    fake_github.accept_invitations = False
+    body = await _task(client, world, await _group(client, world), assignee=world.dev_id)
+    assert body["task"]["assigned_to"]["id"] == world.dev_id  # TRACE assigns; GitHub catches up
+    assert fake_github.issues[("acme/storefront", 1)]["assignees"] == []
+    assert any("invitation" in w for w in body["warnings"])
+
+    # accepted later → assigning again reaches the issue
+    fake_github.collaborators["acme/storefront"].add("dan-gh")
+    resp = await client.patch(f"/api/v1/tasks/{body['task']['id']}/assign", headers=world.pm,
+                              json={"assigned_to_user_id": world.dev_id})
+    assert resp.status_code == 200 and resp.json()["warnings"] == []
+    assert fake_github.issues[("acme/storefront", 1)]["assignees"] == ["dan-gh"]
+
+
+async def test_reassigning_to_a_pending_invitee_unassigns_the_issue(client: AsyncClient, world: World, fake_github):
+    task = (await _task(client, world, await _group(client, world), assignee=world.pm_id))["task"]
+    assert fake_github.issues[("acme/storefront", 1)]["assignees"] == ["priya-gh"]
+    fake_github.accept_invitations = False
+    resp = await client.patch(f"/api/v1/tasks/{task['id']}/assign", headers=world.pm,
+                              json={"assigned_to_user_id": world.dev_id})
+    assert resp.status_code == 200 and any("invitation" in w for w in resp.json()["warnings"])
+    assert fake_github.issues[("acme/storefront", 1)]["assignees"] == []
+
+
+async def test_removed_pm_loses_repo_access(client: AsyncClient, world: World, fake_github):
+    resp = await client.delete(f"{API}/projects/{world.project_id}/assignments/{world.pm_id}", headers=world.manager)
+    assert resp.json() == {"project_role": None, "warnings": []}
+    assert "priya-gh" not in fake_github.collaborators["acme/storefront"]
+
+
+async def test_removal_withdraws_a_pending_invitation(client: AsyncClient, world: World, fake_github):
+    fake_github.accept_invitations = False
+    await client.post(f"{API}/projects/{world.project_id}/assignments", headers=world.manager,
+                      json={"user_id": world.dev_id})
+    assert list(fake_github.invitations["acme/storefront"].values()) == ["dan-gh"]
+    await client.delete(f"{API}/projects/{world.project_id}/assignments/{world.dev_id}", headers=world.manager)
+    assert fake_github.invitations["acme/storefront"] == {}
+
+
+async def test_pm_who_stays_as_member_keeps_repo_access(client: AsyncClient, world: World, fake_github):
+    await _task(client, world, await _group(client, world), assignee=world.pm_id)
+    resp = await client.delete(f"{API}/projects/{world.project_id}/assignments/{world.pm_id}", headers=world.manager)
+    assert resp.json()["project_role"] == "Member"
+    assert "priya-gh" in fake_github.collaborators["acme/storefront"]
 
 
 async def test_managers_see_only_their_own_projects(client: AsyncClient, world: World):
@@ -152,6 +301,37 @@ async def test_project_with_open_tasks_cannot_be_deleted(client: AsyncClient, wo
     await _task(client, world, await _group(client, world))
     resp = await client.delete(f"{API}/projects/{world.project_id}", headers=world.manager)
     assert resp.status_code == 409
+    assert "archived" not in fake_github.repos["acme/storefront"]
+
+
+async def test_deleting_a_project_archives_its_repo(client: AsyncClient, world: World, fake_github):
+    resp = await client.delete(f"{API}/projects/{world.project_id}", headers=world.manager)
+    assert resp.status_code == 204
+    assert fake_github.repos["acme/storefront"]["archived"] is True
+    assert (await client.get(f"{API}/projects", headers=world.manager)).json() == []
+    # the name stays taken on GitHub
+    again = await client.post(f"{API}/projects", headers=world.manager, json={"name": "Storefront"})
+    assert again.status_code == 409
+
+
+async def test_archive_failure_keeps_the_project(client: AsyncClient, world: World, fake_github):
+    fake_github.fail_with = 500
+    resp = await client.delete(f"{API}/projects/{world.project_id}", headers=world.manager)
+    assert resp.status_code == 502
+    fake_github.fail_with = None
+    assert (await client.get(f"{API}/projects/{world.project_id}", headers=world.manager)).status_code == 200
+
+
+async def test_repo_already_gone_does_not_block_deletion(client: AsyncClient, world: World, fake_github):
+    del fake_github.repos["acme/storefront"]
+    assert (await client.delete(f"{API}/projects/{world.project_id}", headers=world.manager)).status_code == 204
+
+
+async def test_repo_outside_the_organization_is_left_alone(client: AsyncClient, world: World, fake_github):
+    await client.patch(f"{API}/projects/{world.project_id}", headers=world.manager,
+                       json={"github_repo": "someone/their-repo"})
+    assert (await client.delete(f"{API}/projects/{world.project_id}", headers=world.manager)).status_code == 204
+    assert not any(r[0] == "PATCH" and r[1] == "/repos/someone/their-repo" for r in fake_github.requests)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -257,7 +437,7 @@ async def test_pm_cannot_appoint_pms(client: AsyncClient, world: World):
 
 async def test_removed_pm_loses_access(client: AsyncClient, world: World):
     assert (await client.delete(f"{API}/projects/{world.project_id}/assignments/{world.pm_id}",
-                                headers=world.manager)).status_code == 204
+                                headers=world.manager)).status_code == 200
     assert (await client.get(f"{API}/projects/{world.project_id}", headers=world.pm)).status_code == 403
 
 
@@ -325,6 +505,9 @@ async def test_assignee_without_github_username_gets_a_warning(client: AsyncClie
 
 async def test_no_github_means_no_task(client: AsyncClient, world: World):
     """Task creation is issue creation — without GitHub neither happens (CORE.md §4)."""
+    from app.main import app
+    from app.services.github_service import get_github_client
+    app.dependency_overrides[get_github_client] = lambda: None
     group_id = await _group(client, world)
     resp = await client.post(f"{API}/projects/{world.project_id}/tasks", headers=world.pm,
                              json={"title": "Orphan", "task_group_id": group_id})
@@ -347,7 +530,7 @@ async def test_github_failure_rolls_the_task_back(client: AsyncClient, world: Wo
 
 async def test_group_must_belong_to_the_project(client: AsyncClient, world: World, fake_github):
     other = (await client.post(f"{API}/projects", headers=world.manager,
-                               json={"name": "Other", "github_repo": "acme/other"})).json()
+                               json={"name": "Other"})).json()
     await client.post(f"{API}/projects/{other['id']}/assignments", headers=world.manager, json={"user_id": world.pm_id})
     foreign_group = (await client.post(f"{API}/projects/{other['id']}/task-groups", headers=world.pm,
                                        json={"name": "Foreign"})).json()["id"]

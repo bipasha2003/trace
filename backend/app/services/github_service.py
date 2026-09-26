@@ -1,14 +1,15 @@
 """
 TRACE - GitHub integration
 
-A task *is* a GitHub issue (CORE.md §4). This client does the four things the
-build needs: create an issue, set its assignees, open/close it, and commit a
-markdown file. It is deliberately small and synchronous-per-request: the caller
+A task *is* a GitHub issue (CORE.md §4). The client creates each project's
+repository under the company organization and manages its collaborators
+(CORE.md §4.1), creates issues, sets their assignees, opens/closes them, and
+commits markdown files. It is deliberately small and synchronous-per-request: the caller
 wraps each call in the same DB transaction as the task change, so a GitHub
 failure rolls the task back and the two never drift apart.
 
-Credentials come from `system_settings` (github.token / github.api_url) with the
-.env fallback — see app/services/system_settings.py.
+Credentials come from `system_settings` (github.owner / github.token / github.api_url)
+with the .env fallback — see app/services/system_settings.py.
 """
 
 import base64
@@ -24,6 +25,13 @@ from app.exceptions import TraceException
 from app.services.system_settings import resolve_setting
 
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}$")
+OWNER_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
+
+
+def repo_slug(name: str) -> str:
+    """Project name → repository name: lowercase, [a-z0-9-], at most 100 characters."""
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return slug[:100].rstrip("-")
 
 
 class GitHubNotConfigured(TraceException):
@@ -45,13 +53,33 @@ class GitHubError(TraceException):
             except ValueError:
                 message = response.text[:200]
             reason = f"{response.status_code} {message}"
+        self.github_status = response.status_code if response is not None else None
+        self.github_body = response.text if response is not None else ""
         super().__init__(status_code=502, detail=f"GitHub refused to {action}: {reason}")
+
+
+class GitHubOwnerNotConfigured(TraceException):
+    def __init__(self):
+        super().__init__(
+            status_code=503,
+            detail=(
+                "No GitHub organization is configured, so no repository can be created. "
+                "Set it in Admin → Configuration → GitHub, or GITHUB_OWNER in .env."
+            ),
+        )
 
 
 @dataclass
 class Issue:
     number: int
     url: str
+
+
+@dataclass
+class Repo:
+    full_name: str
+    url: str
+    default_branch: str
 
 
 class GitHubClient:
@@ -85,6 +113,73 @@ class GitHubClient:
         if response.status_code >= 400:
             raise GitHubError(action, response)
         return response
+
+    # ── Account and organization ─────────────────────────────────
+
+    async def authenticated_login(self) -> str:
+        return (await self._request("authenticate the token", "GET", "/user")).json()["login"]
+
+    async def organization(self, org: str) -> dict:
+        return (await self._request(f"show the organization '{org}'", "GET", f"/orgs/{org}")).json()
+
+    # ── Repositories and collaborators ───────────────────────────
+
+    async def create_repo(self, org: str, name: str, description: str | None) -> Repo:
+        """Always public, initialised so documents can be committed at once (CORE.md §4.1)."""
+        payload = {"name": name, "private": False, "auto_init": True, "has_issues": True}
+        if description:
+            payload["description"] = " ".join(description.split())[:350]
+        try:
+            data = (await self._request("create the repository", "POST", f"/orgs/{org}/repos",
+                                        json=payload)).json()
+        except GitHubError as exc:
+            if exc.github_status == 422 and "already exists" in exc.github_body:
+                raise TraceException(
+                    409, f"A repository named '{org}/{name}' already exists — rename the project",
+                ) from None
+            if exc.github_status in (403, 404):
+                raise TraceException(
+                    502,
+                    f"The GitHub token cannot create repositories in '{org}' ({exc.github_status}). "
+                    "Give it Administration: read and write on that organization.",
+                ) from None
+            raise
+        return Repo(full_name=data["full_name"], url=data["html_url"],
+                    default_branch=data.get("default_branch") or "main")
+
+    async def archive_repo(self, repo: str) -> bool:
+        """Make the repository read-only (the token cannot delete). False if it no longer exists."""
+        try:
+            await self._request("archive the repository", "PATCH", f"/repos/{repo}", json={"archived": True})
+        except GitHubError as exc:
+            if exc.github_status == 404:
+                return False
+            raise
+        return True
+
+    async def add_collaborator(self, repo: str, username: str) -> bool:
+        """Grant Write. True when GitHub sent an invitation, False when already a collaborator."""
+        response = await self._request(f"invite '{username}' to the repository", "PUT",
+                                       f"/repos/{repo}/collaborators/{username}",
+                                       json={"permission": "push"})
+        return response.status_code == 201
+
+    async def remove_collaborator(self, repo: str, username: str) -> None:
+        """Revoke access, and withdraw an invitation that was never accepted."""
+        try:
+            await self._request(f"remove '{username}' from the repository", "DELETE",
+                                f"/repos/{repo}/collaborators/{username}")
+        except GitHubError as exc:
+            if exc.github_status != 404:
+                raise
+        invitations = (await self._request("list the repository invitations", "GET",
+                                           f"/repos/{repo}/invitations")).json()
+        for invitation in invitations:
+            if (invitation.get("invitee") or {}).get("login", "").lower() == username.lower():
+                await self._request(f"withdraw the invitation for '{username}'", "DELETE",
+                                    f"/repos/{repo}/invitations/{invitation['id']}")
+
+    # ── Issues ───────────────────────────────────────────────────
 
     async def create_issue(self, repo: str, title: str, body: str,
                            assignees: list[str] | None = None) -> Issue:
@@ -147,6 +242,14 @@ async def get_github_client(db: AsyncSession = Depends(get_db)) -> GitHubClient 
         await resolve_setting(db, "github", "api_url") or "https://api.github.com",
         committer={"name": name, "email": email} if name and email else None,
     )
+
+
+async def resolve_owner(db: AsyncSession) -> str:
+    """The organization project repositories live under; 503 when none is configured."""
+    owner = await resolve_setting(db, "github", "owner")
+    if not owner:
+        raise GitHubOwnerNotConfigured()
+    return owner
 
 
 def require_github(client: GitHubClient | None) -> GitHubClient:

@@ -80,6 +80,7 @@ ROLE_MATRIX = [
     ("GET", "/api/v1/reports/attendance-summary", ADMIN),
     ("GET", "/api/v1/dashboard/stats", ADMIN),
     ("GET", "/api/v1/admin/tables", ADMIN),
+    ("GET", "/api/v1/admin/settings/github", ADMIN),
     ("GET", "/api/v1/users", ADMIN_MANAGER),
     ("GET", "/api/v1/users/me", ANY_ROLE),
     ("GET", "/api/v1/departments", ANY_ROLE),
@@ -100,6 +101,8 @@ ADMIN_ONLY_DENIAL_CHECKS = [
     ("POST", "/api/v1/employees", {"user_id": 1, "employee_code": "EMP-X"}),
     ("POST", "/api/v1/departments", {"name": "Blocked Dept"}),
     ("POST", "/api/v1/productivity/compute-all", None),
+    ("PUT", "/api/v1/admin/settings/github", {"owner": "hijack"}),
+    ("POST", "/api/v1/admin/settings/github/test", None),
 ]
 
 

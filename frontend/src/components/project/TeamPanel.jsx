@@ -40,8 +40,9 @@ export default function TeamPanel({ projectId, isOwner, onChange }) {
   const appoint = async () => {
     setBusy(true)
     try {
-      await projectsApi.assignProjectManager(projectId, Number(pick))
-      toast.success('Project Manager assigned')
+      const { data } = await projectsApi.assignProjectManager(projectId, Number(pick))
+      toast.success('Project Manager assigned — invited to the GitHub repository')
+      data.warnings.forEach((w) => toast.warning(w))
       setPick('')
       await load()
       onChange?.()
@@ -54,10 +55,11 @@ export default function TeamPanel({ projectId, isOwner, onChange }) {
 
   const remove = async (member) => {
     try {
-      await projectsApi.removeProjectManager(projectId, member.user.id)
-      toast.success(member.open_tasks
+      const { data } = await projectsApi.removeProjectManager(projectId, member.user.id)
+      toast.success(data.project_role === 'Member'
         ? `${member.user.name} stays on the project as a Member — they still hold tasks`
-        : `${member.user.name} removed from the project`)
+        : `${member.user.name} removed from the project and its GitHub repository`)
+      data.warnings.forEach((w) => toast.warning(w))
       await load()
       onChange?.()
     } catch (err) {

@@ -40,7 +40,6 @@ from app.models.project import (
     GanttChart,
     TaskDiscussion,
     Notification,
-    SystemSetting,
     CicdEvent,
 )
 
@@ -81,7 +80,8 @@ MODEL_REGISTRY: Dict[str, Dict[str, Any]] = {
     "cicd_events": {"model": CicdEvent, "display_name": "CI/CD Events", "category": "Tasks & Projects"},
     # AI & System
     "productivity_scores": {"model": ProductivityScore, "display_name": "Productivity Scores", "category": "AI & System"},
-    "system_settings": {"model": SystemSetting, "display_name": "System Settings", "category": "AI & System"},
+    # system_settings is deliberately absent: it holds encrypted secrets, and the generic
+    # CRUD would return them and write them unencrypted. It is served by api/v1/settings.py.
 }
 
 
@@ -187,7 +187,7 @@ async def get_table_records(
     page_size: int = Query(20, ge=1, le=100),
     search: Optional[str] = Query(None),
     sort_by: Optional[str] = Query(None),
-    sort_order: str = Query("asc", regex="^(asc|desc)$"),
+    sort_order: str = Query("asc", pattern="^(asc|desc)$"),
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ):

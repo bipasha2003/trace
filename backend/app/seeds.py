@@ -328,7 +328,9 @@ async def seed_demo_project(db: AsyncSession) -> None:
         name="TRACE Platform MVP",
         description="Build the core TRACE project management platform with AI-driven task planning.",
         created_by_user_id=manager.id,
-        github_repo="org/trace-platform",
+        # The demo repo is created by hand in the organization (TRACE creates repos only
+        # for projects made through the API)
+        github_repo=f"{get_settings().GITHUB_OWNER or 'org'}/trace-platform",
         github_default_branch="main",
         status="Active",
         start_date=date(2026, 9, 1),

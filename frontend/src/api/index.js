@@ -12,4 +12,5 @@ export { projectsApi } from './projects'
 export { productivityApi } from './productivity'
 export { hrmsApi } from './hrms'
 export { adminApi } from './admin'
+export { settingsApi } from './settings'
 

@@ -63,21 +63,3 @@ class AlreadyExistsException(TraceException):
             status_code=status.HTTP_409_CONFLICT,
             detail=f"{resource} already exists.",
         )
-
-
-# ── Attendance Exceptions ───────────────────────────────────────
-
-class GeoFenceViolationException(TraceException):
-    def __init__(self):
-        super().__init__(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You are outside the allowed geo-fence area.",
-        )
-
-
-class AlreadyCheckedInException(TraceException):
-    def __init__(self):
-        super().__init__(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="You have already checked in today.",
-        )

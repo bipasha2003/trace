@@ -31,6 +31,16 @@ INSECURE_JWT_SECRETS = {
 }
 
 
+def valid_fernet_key(key: str) -> bool:
+    from cryptography.fernet import Fernet
+
+    try:
+        Fernet(key.encode())
+    except (ValueError, TypeError):
+        return False
+    return True
+
+
 class Settings(BaseSettings):
     """Application settings loaded from the root .env file."""
 
@@ -90,7 +100,14 @@ class Settings(BaseSettings):
     SMTP_PORT: int | None = None  # defaults to MAILPIT_SMTP_PORT
     SMTP_FROM: str = "noreply@trace.com"
 
+    # ── Settings encryption ──────────────────────────────────────
+    # Fernet key for secret system_settings rows (github.token, …). Required in
+    # production. Generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    SETTINGS_ENCRYPTION_KEY: str = ""
+
     # ── GitHub (fallback — Admin → Configuration overrides) ──────
+    # The organization every project repository is created under (CORE.md §4.1)
+    GITHUB_OWNER: str = ""
     GITHUB_TOKEN: str = ""
     GITHUB_API_URL: str = "https://api.github.com"
     # Identity on the commits TRACE makes into project repos (generated docs).
@@ -152,6 +169,13 @@ class Settings(BaseSettings):
                 "JWT_SECRET_KEY is a placeholder or shorter than 32 characters (.env) — "
                 'generate one with: python -c "import secrets; print(secrets.token_urlsafe(48))"'
             )
+        if not self.SETTINGS_ENCRYPTION_KEY:
+            problems.append(
+                "SETTINGS_ENCRYPTION_KEY is empty (.env) — generate one with: python -c "
+                '"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
+            )
+        elif not valid_fernet_key(self.SETTINGS_ENCRYPTION_KEY):
+            problems.append("SETTINGS_ENCRYPTION_KEY is not a valid Fernet key (.env)")
         return problems
 
     model_config = {

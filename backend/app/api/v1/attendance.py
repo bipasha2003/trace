@@ -15,7 +15,6 @@ from app.exceptions import NotFoundException
 from app.models.employee import Employee
 from app.models.user import User
 from app.schemas.attendance import AttendanceResponse, AttendanceListResponse
-from app.services.attendance_service import AttendanceService
 
 # Attendance records are Admin-owned — PROJECT.md §9.1
 router = APIRouter(prefix="/attendance", tags=["Attendance"], dependencies=[Depends(require_admin)])

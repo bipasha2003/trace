@@ -1,26 +1,12 @@
 """
 TRACE - Attendance Schemas
-Pydantic models for check-in/out and attendance records.
+Pydantic models for attendance records (Admin-maintained; no clock-in/out).
 """
 
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, Field
-
-
-# ── Check-In ─────────────────────────────────────────────────────
-
-class CheckInRequest(BaseModel):
-    """Employee check-in payload with GPS coords."""
-    latitude: float = Field(..., ge=-90, le=90)
-    longitude: float = Field(..., ge=-180, le=180)
-
-
-class CheckOutRequest(BaseModel):
-    """Employee check-out payload."""
-    latitude: float | None = Field(None, ge=-90, le=90)
-    longitude: float | None = Field(None, ge=-180, le=180)
+from pydantic import BaseModel
 
 
 # ── Attendance Response ──────────────────────────────────────────

@@ -25,6 +25,10 @@ TEST_DATABASE_URL = os.environ.get(
     _dev_url.set(database="trace_test").render_as_string(hide_password=False),
 )
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+# Whatever .env says: a known organization, no real token, and a throwaway encryption key
+os.environ["GITHUB_OWNER"] = "acme"
+os.environ["GITHUB_TOKEN"] = ""
+os.environ["SETTINGS_ENCRYPTION_KEY"] = "kZ3o0f4Vw3d5e1Xyq2l9m8n7b6v5c4x3z2a1s0d9f8g="
 get_settings.cache_clear()
 
 import asyncpg  # noqa: E402
@@ -181,13 +185,28 @@ from app.services.storage import get_storage  # noqa: E402
 
 
 class FakeGitHub:
-    """GitHub's REST API on an httpx.MockTransport: the real GitHubClient runs, only the network is fake."""
+    """GitHub's REST API on an httpx.MockTransport: the real GitHubClient runs, only the network is fake.
+
+    Like GitHub, an issue can only be assigned to a repository collaborator. Invitations are
+    accepted at once unless `accept_invitations` is False, which leaves them pending.
+    """
 
     def __init__(self):
         self.issues: dict[tuple[str, int], dict] = {}
         self.files: dict[tuple[str, str], dict] = {}
+        self.repos: dict[str, dict] = {}
+        self.collaborators: dict[str, set[str]] = {}
+        self.invitations: dict[str, dict[int, str]] = {}  # repo → {invitation id: login}
+        self.orgs = {"acme"}
+        self.login = "trace-bot"
+        self.accept_invitations = True
         self.requests: list[tuple[str, str, dict | None]] = []
         self.fail_with: int | None = None  # set to e.g. 500 to make every call fail
+
+    def add_repo(self, full_name: str) -> None:
+        self.repos.setdefault(full_name, {"full_name": full_name, "private": False})
+        self.collaborators.setdefault(full_name, set())
+        self.invitations.setdefault(full_name, {})
 
     def _handle(self, request: httpx.Request) -> httpx.Response:
         body = _json.loads(request.content) if request.content else None
@@ -195,7 +214,52 @@ class FakeGitHub:
         if self.fail_with:
             return httpx.Response(self.fail_with, json={"message": "simulated GitHub failure"})
         parts = request.url.path.strip("/").split("/")  # repos/{owner}/{repo}/...
+        if parts == ["user"]:
+            return httpx.Response(200, json={"login": self.login})
+        if parts[0] == "orgs" and len(parts) == 2:
+            if parts[1] not in self.orgs:
+                return httpx.Response(404, json={"message": "Not Found"})
+            return httpx.Response(200, json={"login": parts[1], "name": parts[1].title()})
+        if parts[0] == "orgs" and parts[2:] == ["repos"] and request.method == "POST":
+            full_name = f"{parts[1]}/{body['name']}"
+            if full_name in self.repos:
+                return httpx.Response(422, json={"message": "Repository creation failed.", "errors": [
+                    {"resource": "Repository", "field": "name", "message": "name already exists on this account"}]})
+            self.add_repo(full_name)
+            self.repos[full_name].update(body)
+            return httpx.Response(201, json={"full_name": full_name, "default_branch": "main",
+                                             "html_url": f"https://github.com/{full_name}"})
         repo = f"{parts[1]}/{parts[2]}"
+        if len(parts) == 3:  # the repository itself
+            if repo not in self.repos:
+                return httpx.Response(404, json={"message": "Not Found"})
+            if request.method == "PATCH":
+                self.repos[repo].update(body)
+            return httpx.Response(200, json=self.repos[repo])
+        self.add_repo(repo)
+        if parts[3] == "collaborators":
+            login = parts[4]
+            if request.method == "PUT":
+                if login in self.collaborators[repo]:
+                    return httpx.Response(204)
+                if self.accept_invitations:
+                    self.collaborators[repo].add(login)
+                else:
+                    self.invitations[repo][len(self.invitations[repo]) + 1] = login
+                return httpx.Response(201, json={"id": 1})
+            if login not in self.collaborators[repo]:
+                return httpx.Response(404, json={"message": "Not Found"})
+            self.collaborators[repo].discard(login)
+            return httpx.Response(204)
+        if parts[3] == "invitations":
+            if request.method == "GET":
+                return httpx.Response(200, json=[{"id": i, "invitee": {"login": login}}
+                                                 for i, login in self.invitations[repo].items()])
+            self.invitations[repo].pop(int(parts[4]), None)
+            return httpx.Response(204)
+        if parts[3] == "issues" and body and any(a not in self.collaborators[repo] for a in body.get("assignees", [])):
+            return httpx.Response(422, json={"message": "Validation Failed", "errors": [
+                {"resource": "Issue", "field": "assignees", "code": "invalid"}]})
         if parts[3] == "issues" and request.method == "POST":
             number = len([k for k in self.issues if k[0] == repo]) + 1
             self.issues[(repo, number)] = {**body, "state": "open", "assignees": body.get("assignees", [])}

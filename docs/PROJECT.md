@@ -125,7 +125,7 @@ Panels are fully separated by base route. There is no shared shell across roles.
 
 | Menu | Route | Contents |
 |------|-------|----------|
-| **Control Panel** | `/admin/control-panel` | Generic CRUD over **every** table. Raw and table-driven — the escape hatch, not the daily UI. |
+| **Control Panel** | `/admin/control-panel` | Generic CRUD over every table **except `system_settings`**, which holds encrypted secrets and is served only by Configuration. Raw and table-driven — the escape hatch, not the daily UI. |
 | **Workforce** | `/admin/workforce` | Curated UI over the whole workforce record set: employees, managers, leaves, holidays, attendance, work shifts, departments, designations. Every tab has CRUD **and bulk upload** (CSV/JSON). The same tables appear in Control Panel; this is the human view. |
 | **Monitor** | `/admin/monitor` | Server and service health: API, PostgreSQL, Redis, Celery worker, Celery beat, MinIO, Mailpit, WebSocket, LLM reachability, recent Celery job outcomes. |
 | **Configuration** | `/admin/configuration` | Runtime settings in the database, not only `.env`: mail/SMTP, AI provider (key, base URL, model), GitHub (the company's owner + token — [`CORE.md`](CORE.md) §4.1), CI/CD webhook secret. Per-section "test connection". |
@@ -149,7 +149,7 @@ breakdown, assigned Project Managers, progress report.
 ### 6.3 Manager actions
 | Action | Description |
 |--------|-------------|
-| Create project | Name, description, GitHub repository, and upload of one or more **project source files** |
+| Create project | Name, description, and upload of one or more **project source files**. TRACE creates the project's public GitHub repository itself |
 | Evaluate Project | Triggers the AI pipeline — [`CORE.md`](CORE.md) §3 |
 | Assign / remove Project Managers | From the Employee pool, with AI-ranked suggestions |
 | View progress | Per-project and combined |
@@ -374,11 +374,14 @@ Backs Admin → Configuration.
 |--------|------|-------|
 | `category` | `String(50)` | `mail`, `ai`, `github`, `cicd` |
 | `key` | `String(100)` | |
-| `value` | `Text` | Encrypted at rest for secrets |
-| `is_secret` | `Boolean` | Masked in API responses |
+| `value` | `Text` | For secrets, a Fernet token (key `SETTINGS_ENCRYPTION_KEY` in `.env`), decrypted only inside `resolve_setting()` |
+| `is_secret` | `Boolean` | Set by `store_setting()` for the keys in `SECRET_SETTINGS`. Never returned by any API — responses say only whether it is set, and from where |
 
 Unique on (`category`, `key`). Resolution order: database value, then `.env` fallback
-(`app/services/system_settings.py`).
+(`app/services/system_settings.py`). Written only through `store_setting()` — the
+Control Panel's generic CRUD does not list this table, because it would return
+secrets and write them unencrypted. If `SETTINGS_ENCRYPTION_KEY` changes, saved
+secrets can no longer be decrypted and must be entered again (a clear 503 says so).
 
 GitHub keys ([`CORE.md`](CORE.md) §4.1):
 
@@ -386,7 +389,7 @@ GitHub keys ([`CORE.md`](CORE.md) §4.1):
 |-----|--------|-----------------|---------|
 | `github.owner` | no | `GITHUB_OWNER` | The organization every project repo lives under |
 | `github.token` | **yes** — encrypted, write-only | `GITHUB_TOKEN` | Fine-grained token scoped to that owner |
-| `github.api_url` | no | `GITHUB_API_URL` | `https://api.github.com`; GitHub Enterprise otherwise |
+| `github.api_url` | no | `GITHUB_API_URL` | `https://api.github.com`; GitHub Enterprise otherwise. Not on the Configuration screen |
 | `github.committer_name` / `github.committer_email` | no | `GITHUB_COMMITTER_NAME` / `_EMAIL` | Identity on the commits TRACE makes |
 
 ### 11.9 `cicd_events`
@@ -548,10 +551,10 @@ Reports         FileBarChart
 
 | Screen | Notes |
 |--------|-------|
-| **Control Panel** | Table picker grouped by category, then a generic data grid with create/edit/delete dialogs and filtering. Driven by the existing `MODEL_REGISTRY` pattern in `backend/app/api/v1/admin.py`. |
+| **Control Panel** | Table picker grouped by category, then a generic data grid with create/edit/delete dialogs and filtering. Driven by the existing `MODEL_REGISTRY` pattern in `backend/app/api/v1/admin.py`. `system_settings` is deliberately not in it. |
 | **Workforce** | Tabs per §5. Purpose-built, not a raw grid: directory cards and search for people, an approve/reject queue for leaves, a calendar for holidays, a filterable log for attendance, a shift editor with employee assignment. Every tab has a **Bulk Upload** action (CSV/JSON) with a validation summary that reports rejected rows rather than failing silently. Attendance and shifts are Admin-maintained records — there is no clock-in control anywhere in the product. |
 | **Monitor** | `ServiceMonitor.jsx` promoted from a header overlay to a page. Health cards for API, PostgreSQL, Redis, Celery worker, Celery beat, MinIO, Mailpit, WebSocket and LLM, plus recent Celery job outcomes. |
-| **Configuration** | Sections for Mail/SMTP, AI provider, GitHub, CI/CD webhook. Secrets are write-only (masked, never returned), each section with "Test connection". Writes to `system_settings`. **GitHub is built first** — organization, token, committer identity; its test checks the token and the organization — because no task can be created without it. Repos are always public, so there is no visibility setting. |
+| **Configuration** | Sections for Mail/SMTP, AI provider, GitHub, CI/CD webhook. Secrets are write-only (masked, never returned), each section with "Test connection". Writes to `system_settings`. **GitHub is built (Phase 3a)** — organization, token (a password field showing only *Not set / Set here / Set in .env*; blank keeps it, "Clear saved token" falls back to `.env`), committer name and email. *Test connection* runs against the **saved** settings (disabled while there are unsaved edits) and reports two checks: token authenticates, organization visible. Repos are always public, so there is no visibility setting. Mail, AI and CI/CD remain Phase 8 placeholders. |
 | **Reports** | Placeholder page stating the report set is pending definition. |
 
 ## 19. Manager panel UI
@@ -584,8 +587,14 @@ progress bars and Project Manager avatars, and a recent-activity feed.
 type one ([`CORE.md`](CORE.md) §4.1). The upload step says plainly that generated
 documents will be public. On create, offer **Evaluate Project** immediately.
 
-> *Phase 3 as built* still asks the Manager for an existing `owner/repo`; the
-> GitHub-owner work in [`DEVELOPMENT.md`](DEVELOPMENT.md) Phase 3a replaces that field.
+*As built (Phase 3a):* the details step shows the slug as the name is typed (the
+server computes the real one); the source-files and review steps both carry the
+"repository is public" notice. There is no branch field — the default branch is
+whatever GitHub gives the new repo (it stays editable on the project, as does
+`github_repo` for projects created before Phase 3a). A name clash comes back as a
+409 toast naming `<org>/<slug>`; nothing is created. The **team panel** toasts
+the GitHub warnings from appointing or removing a Project Manager (no GitHub
+username, invitation refused).
 
 ## 20. Employee panel UI
 
@@ -684,14 +693,16 @@ version number and `generated_reason` so users understand why it moved.
 ### Projects *(new core)*
 | Feature | Status | Notes |
 |---------|--------|-------|
-| `projects` table + CRUD | ✅ | Manager-owned (Q11); delete refused while tasks are open |
+| `projects` table + CRUD | ✅ | Manager-owned (Q11); delete refused while tasks are open, and archives the repo |
 | `project_source_files` multi-upload (MinIO) | ✅ | pdf / docx / md / txt, 20 MB each; text extracted at upload; rejects reported per file |
 | The four project documents | 🔲 | Columns exist; population in Phase 5 |
 | Project Manager assignment / removal | ✅ | Plain picker; a removed PM holding tasks stays as Member. AI ranking is Phase 5 |
 | Manager combined + per-project dashboards | ✅ | Tree, Gantt and Progress Report tabs are placeholders until Phases 4–5 |
-| GitHub owner model — one company owner + token | 🔲 | Decided 2026-09-26, [`CORE.md`](CORE.md) §4.1. Build in Phase 3a |
-| Repo created by TRACE per project | 🔲 | Phase 3a. Today the Manager enters an existing `owner/repo` |
-| Collaborator invite on joining a project | 🔲 | Phase 3a. Needed before issues can be assigned to people outside the owner |
+| GitHub owner model — one company owner + token | ✅ | Phase 3a. Admin → Configuration → GitHub; token Fernet-encrypted at rest, write-only; `/admin/settings/github` + `/test`. Production refuses to start without `SETTINGS_ENCRYPTION_KEY` |
+| Repo created by TRACE per project | ✅ | Phase 3a. `<org>/<name-slug>`, public, `auto_init`; created before the row; clash → 409; no token or org → 503; token without Administration → precise 502 |
+| Repo archived on project delete | ✅ | Phase 3a follow-up. Archive before soft-delete; failure keeps the project; only repos under the organization. API only — there is no delete-project button |
+| Member removal, resend invitation | ❌ | Not planned — educational scope (`PLANNING.md` §4). Re-assigning a task re-invites |
+| Collaborator invite on joining a project | ✅ | Phase 3a. *Write* on PM appointment and on every task assignment (idempotent); revoked, with any pending invitation withdrawn, when a PM leaves. Never blocks the change — problems are warnings. Pending invitation → issue created unassigned + warning; assign again once accepted. No invite UI of its own |
 | Project tree graph | 🔲 | |
 | Gantt chart, versioned | 🔲 | `gantt_charts` table exists; population in Phase 5 |
 
@@ -734,11 +745,11 @@ version number and `generated_reason` so users understand why it moved.
 ### Admin panel
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Control Panel — all-tables CRUD | ✅ | Extended to all new Phase-1 tables |
+| Control Panel — all-tables CRUD | ✅ | Extended to all new Phase-1 tables, except `system_settings` (removed in Phase 3a — secrets) |
 | Workforce — full record set | 🔄 | Exists split across pages; consolidate |
 | Bulk upload on every Workforce tab | 🔄 | `/hrms/bulk-upload` exists; extend + report rejected rows |
 | Monitor page | ✅ | Promoted from header overlay to /admin/monitor full page |
-| Configuration via `system_settings` | 🔄 | Resolution (DB → `.env`) built. GitHub section pulled forward to Phase 3a; the rest in Phase 8 |
+| Configuration via `system_settings` | 🔄 | Resolution (DB → `.env`), secret encryption and the **GitHub** section built (Phase 3a). Mail, AI and CI/CD sections in Phase 8 |
 | Reports | 🔲 | Placeholder — **Q7 blocks the contents** |
 
 ### Workforce (Admin-owned records)
@@ -760,7 +771,7 @@ version number and `generated_reason` so users understand why it moved.
 | Alembic migrations, `./start.sh` | ✅ | Alembic is the only schema owner; an empty DB reaches head (tested). `start` migrates first |
 | Backend test suite | ✅ | Own `trace_test` DB built by migrations; route-guard audit + role matrix; migration-chain test |
 | WebSocket endpoint | ✅ | Re-point from group chat to notifications/discussion |
-| GitHub API integration | ✅ | `github_service.py`: issue create / assign / open-close, file commit. Repo creation + collaborator invites are Phase 3a |
+| GitHub API integration | ✅ | `github_service.py`: repo create, collaborator add / remove (+ invitation withdrawal), token and organization checks, issue create / assign / open-close, file commit |
 | CI/CD receiver webhook (HMAC) | 🔲 | |
 | The project's own CI/CD pipeline | 🔲 | Explicitly a task in the build |
 | Single root `.env` | ✅ | The only env file; backend derives DB / Redis / MinIO / SMTP settings from the Compose keys |
