@@ -13,6 +13,7 @@ export const tasksApi = {
   assign: (id, userId) => api.patch(`/tasks/${id}/assign`, { assigned_to_user_id: userId }),
   updateStatus: (id, status) => api.patch(`/tasks/${id}/status`, { status }),
   remove: (id) => api.delete(`/tasks/${id}`),
+  progressDoc: (id) => api.get(`/tasks/${id}/progress-doc`),
 }
 
 export default tasksApi

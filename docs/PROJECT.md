@@ -129,8 +129,8 @@ Panels are fully separated by base route. There is no shared shell across roles.
 | **Control Panel** | `/admin/control-panel` | Generic CRUD over every table **except `system_settings`**, which holds encrypted secrets and is served only by Configuration. Raw and table-driven — the escape hatch, not the daily UI. |
 | **Workforce** | `/admin/workforce` | Curated UI over the whole workforce record set: employees, managers, leaves, holidays, attendance, work shifts, departments, designations. Every tab has CRUD **and bulk upload** (CSV/JSON). The same tables appear in Control Panel; this is the human view. |
 | **Monitor** | `/admin/monitor` | Server and service health: API, PostgreSQL, Redis, Celery worker, Celery beat, MinIO, Mailpit, WebSocket, LLM reachability, recent Celery job outcomes. |
-| **Configuration** | `/admin/configuration` | Runtime settings in the database, not only `.env`: mail/SMTP, AI provider (key, base URL, model), GitHub (the company's owner + token — [`CORE.md`](CORE.md) §4.1). Per-section "test connection". |
-| **Reports** | `/admin/reports` | **Pending definition** — see [`PLANNING.md`](PLANNING.md) Q7. Ships as a placeholder route. |
+| **Configuration** | `/admin/configuration` | Runtime settings in the database, not only `.env`: mail/SMTP and GitHub (the company's owner + token — [`CORE.md`](CORE.md) §4.1). Per-section "test connection". **No AI section** — the LLM configuration is fixed in `.env` (user decision 2026-09-26); the model may be shown read-only. |
+| ~~**Reports**~~ | ~~`/admin/reports`~~ | **Removed** (Q7, 2026-09-26). Reports are a **Download report** action on the Manager and Employee dashboards — the project → task group → task tree for a date range ([`PLANNING.md`](PLANNING.md) Q7). No scheduled report. |
 
 ---
 
@@ -259,6 +259,7 @@ them — because planning needs to know who is available.
 | `project_progress_doc` | `String(500)` | URL. Rewritten weekly by AI |
 | `project_report_doc` | `String(500)` | URL. Report, AI-maintained |
 | `last_evaluated_at` | `DateTime` | Last successful AI evaluation |
+| `ai_errors` | `JSONB` | `{job name: {message, at}}` — why an AI job on this project last failed; each job clears its own key on success ([`CORE.md`](CORE.md) §2.1). Added Phase 5 |
 
 Has many `project_source_files`, `project_assignments`, `task_groups`; one current
 `gantt_chart`.
@@ -329,6 +330,10 @@ One Gantt module.
 | `completion_percentage` | `Numeric(5,2)` | Rolled up from tasks |
 | `status` | `String(20)` | `Pending`, `In Progress`, `Completed`, `Blocked` |
 | `created_by` | `String(20)` | `AI` or `Human` |
+| `depends_on` | `JSONB` | Ids of the groups this one waits for — from the AI plan, reused by every re-plan ([`CORE.md`](CORE.md) §5). Added Phase 5 |
+
+`planned_*` is the current forecast, rewritten by each Gantt re-plan; `actual_*` is
+stamped by the task roll-up (first leaves `Pending` / becomes `Completed`).
 
 ### 11.5 `gantt_charts`
 
@@ -341,6 +346,7 @@ Materialised and regenerated, never patched.
 | `chart_data` | `JSONB` | Bars, dependencies, milestones — the render payload. Shape fixed by [`CORE.md`](CORE.md) §5.1 (`GanttChartData`); written only through `gantt_service.save_version()`, which validates it |
 | `generated_reason` | `String(100)` | `initial`, `task_status_change`, `project_doc_updated`, `manual` |
 | `generated_at` | `DateTime` | |
+| `generated_by_job` | `String(64)` | The Celery job id that wrote it (`CORE.md` §2 rule 4). Added Phase 5 |
 
 History is kept; the newest version is live.
 
@@ -373,7 +379,7 @@ Backs Admin → Configuration.
 
 | Column | Type | Notes |
 |--------|------|-------|
-| `category` | `String(50)` | `mail`, `ai`, `github` |
+| `category` | `String(50)` | `mail`, `github` (`ai` is never stored — the LLM configuration is fixed in `.env`) |
 | `key` | `String(100)` | |
 | `value` | `Text` | For secrets, a Fernet token (key `SETTINGS_ENCRYPTION_KEY` in `.env`), decrypted only inside `resolve_setting()` |
 | `is_secret` | `Boolean` | Set by `store_setting()` for the keys in `SECRET_SETTINGS`. Never returned by any API — responses say only whether it is set, and from where |
@@ -404,6 +410,7 @@ GitHub keys ([`CORE.md`](CORE.md) §4.1):
 | `project_id` | FK `projects.id` | Required |
 | `task_group_id` | FK `task_groups.id` | Required |
 | `task_progress_doc` | `String(500)` | URL to the AI-authored steps doc |
+| `progress_doc_error` | `Text` | Why the AI could not write it — shown on the task page. Added Phase 5 |
 | `assigned_to_user_id` | FK `users.id` | Replaces employee-based assignment |
 | `assigned_by_user_id` | FK `users.id` | The assigning Project Manager |
 | `completed_by` | `String(20)` | `Assignee` or `Project Manager` — who set `Completed` ([`CORE.md`](CORE.md) §7) |
@@ -446,7 +453,7 @@ they stay as recorded values.)
 > `geo_latitude` / `geo_longitude` columns stay as recorded values; nothing
 > validates against them any more.
 >
-> `productivity_scores` is retained but **re-based**: inputs become task throughput
+> `productivity_scores` is retained but **re-based** (done, Phase 5 — [`CORE.md`](CORE.md) §8): inputs become task throughput
 > and on-time completion rate. Attendance is still recorded but is
 > no longer a scoring input. These scores are what the AI ranks on when it suggests
 > Project Managers and assignees ([`CORE.md`](CORE.md) §3).
@@ -494,7 +501,7 @@ Stack constraints (shadcn/ui, Tailwind v4 tokens, `lucide-react` only) are in
                           Attendance · Shifts · Departments & Designations
 /admin/monitor            Service & server health
 /admin/configuration      Mail · AI · GitHub settings
-/admin/reports            Placeholder — PLANNING.md Q7
+(no /admin/reports — reports are a dashboard download, PLANNING.md Q7)
 /admin/settings           Own profile
 
 /manager                  Combined dashboard ("All" selected)
@@ -544,8 +551,8 @@ Reports         FileBarChart
 | **Control Panel** | Table picker grouped by category, then a generic data grid with create/edit/delete dialogs and filtering. Driven by the existing `MODEL_REGISTRY` pattern in `backend/app/api/v1/admin.py`. `system_settings` is deliberately not in it. |
 | **Workforce** | Tabs per §5. Purpose-built, not a raw grid: directory cards and search for people, an approve/reject queue for leaves, a calendar for holidays, a filterable log for attendance, a shift editor with employee assignment. Every tab has a **Bulk Upload** action (CSV/JSON) with a validation summary that reports rejected rows rather than failing silently. Attendance and shifts are Admin-maintained records — there is no clock-in control anywhere in the product. |
 | **Monitor** | `ServiceMonitor.jsx` promoted from a header overlay to a page. Health cards for API, PostgreSQL, Redis, Celery worker, Celery beat, MinIO, Mailpit, WebSocket and LLM, plus recent Celery job outcomes. |
-| **Configuration** | Sections for Mail/SMTP, AI provider, GitHub. Secrets are write-only (masked, never returned), each section with "Test connection". Writes to `system_settings`. **GitHub is built (Phase 3a)** — organization, token (a password field showing only *Not set / Set here / Set in .env*; blank keeps it, "Clear saved token" falls back to `.env`), committer name and email. *Test connection* runs against the **saved** settings (disabled while there are unsaved edits) and reports two checks: token authenticates, organization visible. Repos are always public, so there is no visibility setting. Mail and AI remain Phase 8 placeholders. |
-| **Reports** | Placeholder page stating the report set is pending definition. |
+| **Configuration** | Sections for Mail/SMTP and GitHub — **no AI provider section** (fixed in `.env`). Secrets are write-only (masked, never returned), each section with "Test connection". Writes to `system_settings`. **GitHub is built (Phase 3a)** — organization, token (a password field showing only *Not set / Set here / Set in .env*; blank keeps it, "Clear saved token" falls back to `.env`), committer name and email. *Test connection* runs against the **saved** settings (disabled while there are unsaved edits) and reports two checks: token authenticates, organization visible. Repos are always public, so there is no visibility setting. Mail remains a Phase 8 placeholder; the AI placeholder card is removed in Phase 8. |
+| ~~**Reports**~~ | Removed — see the dashboard **Download report** (Q7). |
 
 ## 19. Manager panel UI
 
@@ -570,6 +577,13 @@ progress bars and Project Manager avatars, and a recent-activity feed.
 - *Progress Report* — rendered `project_progress_doc` / `project_report_doc`
 - *Team* — assign and remove Project Managers, with AI suggestions (score +
   reasoning) inline
+
+*As built (Phase 5):* the Overview opens with an **AI evaluation** card — the
+button (owner only; disabled without source text, and once the project has tasks),
+"Evaluating…" while it runs (polled every 2 s), and one alert per entry in
+`ai_errors`. *Progress Report* renders both documents with a **Rewrite now**
+button. *Team* has **Suggest with AI**: a ranked list with score, reasoning and the
+numbers behind it, each with its own *Assign* button.
 
 **Create project** — a stepper: details (name, description) → upload source files
 (multi-file drop zone) → review → create. The repository is **created by TRACE** as
@@ -600,7 +614,7 @@ Project Doc · Team**:
   assignee-suggestion endpoint and shows ranked Members with reasoning. The PM can
   set any task's status, including completing it on someone's behalf
   (`completed_by='Project Manager'`) and cancelling it.
-- *Project Doc* — markdown editor over `project_doc`. Saving triggers Gantt
+- *Project Doc* — markdown editor (edit / preview) over `project_doc`. Saving triggers Gantt
   re-evaluation; say so in the UI *before* saving.
 - *Team* — the project's Members.
 
@@ -609,6 +623,12 @@ Read-only with respect to project structure. No create-task control. On **their
 own** tasks a Member sets the status — Pending, In Progress, In Review, Blocked and
 **Completed** (behind a confirmation; `completed_by='Assignee'`). Cancelling is the
 Project Manager's call.
+
+*As built (Phase 5):* the Create Task dialog has **Suggest tasks for this group**
+(fills title, description and priority) and **Suggest assignees** (ranked Members,
+*Pick* fills the assignee) — neither creates or assigns anything. The PM's Gantt
+tab has **Re-plan now**. The Project Doc tab states the re-plan before saving; an
+unchanged save commits nothing.
 
 **Task detail** — description, linked GitHub issue, the rendered
 `task_progress_doc` with its step checklist, status timeline and the discussion
@@ -660,6 +680,10 @@ to the range and the chart scrolls sideways with the group names pinned. Until
 Phase 5 generates versions, a project without a hand-written row shows "No Gantt
 chart yet".
 
+*As built (Phase 5):* versions are written by Evaluate Project (v1, `initial`) and
+by every re-plan (`CORE.md` §5). A Project Manager with hand-made groups and no
+chart can press **Re-plan now** to draw them.
+
 ## 23. Existing pages — disposition
 
 | Current file | Disposition |
@@ -669,7 +693,7 @@ chart yet".
 | `pages/DashboardPage.jsx` | **Replace** with three panel dashboards |
 | `pages/TasksPage.jsx` | **Replace** — infinite tree, group chat and dispute queue give way to project / task-group / task views |
 | `pages/EmployeesPage.jsx` | **Move** into Admin → Workforce |
-| `pages/ProductivityPage.jsx` | **Fold** into Admin → Reports; scores become an AI input, not a headline page |
+| `pages/ProductivityPage.jsx` | **Delete** (Phase 8) — there is no Reports page to fold it into (Q7); scores are an AI input, not a headline page |
 | `pages/FilesPage.jsx` | **Delete as a menu** — uploads happen inside project creation; MinIO remains a backing service |
 | `pages/AdminPanelPage.jsx` | **Keep** — becomes Admin → Control Panel |
 | `components/ServiceMonitor.jsx` | **Keep** — becomes Admin → Monitor |
@@ -704,16 +728,16 @@ chart yet".
 |---------|--------|-------|
 | `projects` table + CRUD | ✅ | Manager-owned (Q11); delete refused while tasks are open, and archives the repo |
 | `project_source_files` multi-upload (MinIO) | ✅ | pdf / docx / md / txt, 20 MB each; text extracted at upload; rejects reported per file |
-| The four project documents | 🔲 | Columns exist; population in Phase 5 |
-| Project Manager assignment / removal | ✅ | Plain picker; a removed PM holding tasks stays as Member. AI ranking is Phase 5 |
-| Manager combined + per-project dashboards | ✅ | Tree and Gantt tabs built (Phase 4); Progress Report is a placeholder until Phase 5 |
+| The four project documents | ✅ | Phase 5. Repo files `docs/<column>.md`; `GET /projects/{id}/documents/{kind}` reads them back; `PUT …/documents/doc` (PM) edits `project_doc` |
+| Project Manager assignment / removal | ✅ | Plain picker or AI-ranked suggestions (Phase 5); a removed PM holding tasks stays as Member |
+| Manager combined + per-project dashboards | ✅ | Tree and Gantt tabs (Phase 4); Evaluate Project card and Progress Report tab (Phase 5) |
 | GitHub owner model — one company owner + token | ✅ | Phase 3a. Admin → Configuration → GitHub; token Fernet-encrypted at rest, write-only; `/admin/settings/github` + `/test`. Production refuses to start without `SETTINGS_ENCRYPTION_KEY` |
 | Repo created by TRACE per project | ✅ | Phase 3a. `<org>/<name-slug>`, public, `auto_init`; created before the row; clash → 409; no token or org → 503; token without Administration → precise 502 |
 | Repo archived on project delete | ✅ | Phase 3a follow-up. Archive before soft-delete; failure keeps the project; only repos under the organization. API only — there is no delete-project button |
 | Member removal, resend invitation | ❌ | Not planned — educational scope (`PLANNING.md` §4). Re-assigning a task re-invites |
 | Collaborator invite on joining a project | ✅ | Phase 3a. *Write* on PM appointment and on every task assignment (idempotent); revoked, with any pending invitation withdrawn, when a PM leaves. Never blocks the change — problems are warnings. Pending invitation → issue created unassigned + warning; assign again once accepted. No invite UI of its own |
 | Project tree graph | ✅ | Phase 4. `GET /projects/{id}/tree` (live read) → `ProjectTreeGraph.jsx` (`@xyflow/react`, pan/zoom); Manager, Admin, PMs and Members, read-only |
-| Gantt chart, versioned | 🔄 | Phase 4: `chart_data` schema (`CORE.md` §5.1, validated on every write), deterministic builder, read API + version history, `GanttChart.jsx`. The demo project has a hand-written v1. Nothing generates versions yet — Phase 5 (Stage 1 step 6, `reevaluate_gantt`) |
+| Gantt chart, versioned | ✅ | Phase 4: `chart_data` schema (`CORE.md` §5.1, validated on every write), builder, read API + version history, `GanttChart.jsx`. Phase 5: v1 from Evaluate Project, re-plans from `reevaluate_gantt`, job id on every version |
 
 ### Task groups & tasks
 | Feature | Status | Notes |
@@ -722,7 +746,7 @@ chart yet".
 | Task CRUD scoped to a group | ✅ | Project Manager only; details and status have separate endpoints |
 | Task ↔ GitHub issue 1:1 on creation | ✅ | Same request; GitHub failure rolls the task back; no token → 503. Complete/cancel/delete close the issue |
 | GitHub issue assignment to Member | ✅ | Via `users.github_username` (Q9, self-service in Profile); missing username → unassigned issue + warning |
-| `task_progress_doc` per task | ✅ | Column exists; population in Phase 5 |
+| `task_progress_doc` per task | ✅ | Phase 5: written by the AI after task creation; rendered on the task page |
 | Status authority enforcement | ✅ | `ProjectAccess.may_set_status`: the assignee sets their own task's status, **Completed included** (`completed_by='Assignee'`); the PM any status; others 403. Reworked 2026-09-26 — Members were previously refused Completed |
 | Per-task discussion | ✅ | `task_discussions` table created Phase 1 |
 | Infinite tree, `Team Lead`, rotating roles | ❌ | Flattened to three levels |
@@ -732,15 +756,16 @@ chart yet".
 ### AI automation — see [`CORE.md`](CORE.md)
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Evaluate Project → doc + groups + Gantt | 🔲 | `CORE.md` §3 |
-| AI suggests Project Managers | 🔲 | |
-| AI suggests tasks + assignees | 🔄 | Reuses AI Subtask Decomposition |
-| AI generates `task_progress_doc` | 🔲 | |
-| Gantt re-evaluation triggers | 🔲 | `CORE.md` §5 |
-| Weekly progress roll-up | 🔲 | `CORE.md` §6 |
+| AI service layer | ✅ | Phase 5. `ai_service.complete` — schema-validated, 2 retries, settings from `.env` (fixed; Phase 8 removes the DB lookup); jobs via `jobs.enqueue`; failures in `ai_errors` (`CORE.md` §2.1) |
+| Evaluate Project → doc + groups + Gantt | ✅ | Phase 5. `POST /projects/{id}/evaluate` + `/evaluate/status`; refused once the project has tasks (`CORE.md` §3 "As built") |
+| AI suggests Project Managers | ✅ | Phase 5. On demand, `POST /projects/{id}/suggest-managers` → job result; never persisted |
+| AI suggests tasks + assignees | ✅ | Phase 5. `…/task-groups/{gid}/suggest-tasks`, `…/tasks/suggest-assignees`; fill the Create Task form only |
+| AI generates `task_progress_doc` | ✅ | Phase 5. After task creation; failure → `tasks.progress_doc_error` |
+| Gantt re-evaluation triggers | ✅ | Phase 5. Completion (and reopening), overdue sweep, `project_doc` save, PM button; 30 s debounce (`CORE.md` §5) |
+| Weekly progress roll-up | ✅ | Phase 5. Beat, Mondays 07:00; `POST /projects/{id}/progress-report` for now |
 | CI/CD webhook → AI completion | ❌ | Removed 2026-09-26 — completion is manual ([`CORE.md`](CORE.md) §7, [`PLANNING.md`](PLANNING.md) §4). `cicd_events` dropped |
 | LLM commit verification | ❌ | Was to become the CI/CD resolver; removed with it |
-| Performance scoring | 🔄 | Re-base on task signals (throughput, on-time rate) |
+| Performance scoring | ✅ | Phase 5. Re-based on task signals (throughput, on-time rate); attendance and active time are no longer inputs. Live `candidate_stats` feed the AI rankings |
 | Task Health Score | ✅ | Retained as a progress-reporting input |
 | Dispute Queue · Auto-Escalation · Overallocation · Scope-Drift | 💤 | Deferred — [`PLANNING.md`](PLANNING.md) |
 
@@ -758,8 +783,8 @@ chart yet".
 | Workforce — full record set | 🔄 | Exists split across pages; consolidate |
 | Bulk upload on every Workforce tab | 🔄 | `/hrms/bulk-upload` exists; extend + report rejected rows |
 | Monitor page | ✅ | Promoted from header overlay to /admin/monitor full page |
-| Configuration via `system_settings` | 🔄 | Resolution (DB → `.env`), secret encryption and the **GitHub** section built (Phase 3a). Mail and AI sections in Phase 8 |
-| Reports | 🔲 | Placeholder — **Q7 blocks the contents** |
+| Configuration via `system_settings` | 🔄 | Resolution (DB → `.env`), secret encryption and the **GitHub** section built (Phase 3a). Mail section in Phase 8. **No AI section** — LLM configuration fixed in `.env` |
+| Reports — dashboard download by date range | 🔲 | Phase 8 (Q7 answered 2026-09-26). Replaces the Admin → Reports page and the weekly report email, both ❌ |
 
 ### Workforce (Admin-owned records)
 | Feature | Status | Notes |

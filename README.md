@@ -43,6 +43,8 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt   # settings come from the root .env
 alembic upgrade head          # the app never creates tables itself
 uvicorn app.main:app --reload --port 8000
+celery -A app.celery_app worker --loglevel=info   # every AI action runs here
+celery -A app.celery_app beat --loglevel=info     # nightly overdue sweep, weekly progress docs
 
 # Frontend
 cd frontend
@@ -58,7 +60,8 @@ cd backend && .venv/bin/python -m pytest -q
 Tests use their own database, `trace_test`, created on first run and built with
 `alembic upgrade head`. They never touch your dev data. The suite also migrates a
 throwaway empty database to prove a fresh checkout can reach the latest schema.
-Point it elsewhere with `TEST_DATABASE_URL`.
+Point it elsewhere with `TEST_DATABASE_URL`. The model, the job queue and GitHub are
+faked, so the suite makes no AI calls whatever your `.env` holds.
 
 ---
 
@@ -95,9 +98,9 @@ backend derives its connection from it. Redis is on 6379.
 Copy `.env.example` to `.env` at the repo root. It is the **only** env file:
 Docker Compose, `start.sh`, the backend and the Vite config all read it. The backend
 derives its database, Redis, MinIO and SMTP connections from the same keys Docker
-Compose uses, so no value is written twice. Mail, AI provider and GitHub
-settings are changed in the app under **Admin → Configuration** — no
-redeploy needed.
+Compose uses, so no value is written twice. GitHub settings are changed in the app
+under **Admin → Configuration** — no redeploy needed; the Mail section is still to
+come, so mail comes from `.env` for now. The AI settings always come from `.env`.
 
 ### GitHub
 
@@ -135,6 +138,17 @@ organization, run `TRACE_LIVE_GITHUB=1 .venv/bin/python -m pytest -q tests/test_
 in `backend/` — it creates one public `trace-smoke-<timestamp>` repo and leaves it
 archived. Deleting a project **archives** its repository (it is
 never deleted, so its name stays taken).
+
+### AI
+
+The AI evaluates projects, plans task groups and the Gantt chart, suggests people
+and tasks, and writes the progress documents (`docs/CORE.md`). It uses any
+OpenAI-compatible API: set `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-4o-mini`)
+and, for another provider, `OPENAI_BASE_URL` in `.env`. They are fixed there on
+purpose — no Admin screen changes them. Every AI action
+runs on the **Celery worker** (`./start.sh start` runs it); without one, *Evaluate
+project* stays at "Evaluating…". The generated documents are committed to the
+project's public repository under `docs/`.
 
 ---
 

@@ -19,7 +19,7 @@ from app.database import get_db
 from app.models.task import Task
 from app.models.user import User
 from app.schemas.project import (
-    TaskAssign, TaskMutationResponse, TaskResponse, TaskStatusUpdate, TaskUpdate,
+    DocumentResponse, TaskAssign, TaskMutationResponse, TaskResponse, TaskStatusUpdate, TaskUpdate,
 )
 from app.services import project_service as svc
 from app.services.github_service import GitHubClient, get_github_client, require_github
@@ -130,3 +130,19 @@ async def delete_task(
     task, access = await resolve_task_access(db, user, task_id)
     access.require_project_manager()
     await svc.delete_task(db, access, task, github)
+
+
+@router.get("/{task_id}/progress-doc", response_model=DocumentResponse,
+            summary="The task's AI-written plan and checklist, read from the repository")
+async def get_task_progress_doc(
+    task_id: int,
+    user: User = Depends(require_any_role),
+    github: GitHubClient | None = Depends(get_github_client),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services import ai_jobs
+    task, access = await resolve_task_access(db, user, task_id)
+    if not task.task_progress_doc:
+        return {"kind": "task", "url": None, "content": None}
+    content = await ai_jobs.read_document(require_github(github), access.project, ai_jobs.task_doc_path(task.id))
+    return {"kind": "task", "url": task.task_progress_doc, "content": content}

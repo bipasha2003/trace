@@ -20,14 +20,15 @@ from app.database import get_db
 from app.exceptions import NotFoundException, TraceException
 from app.models.project import ProjectAssignment, ProjectSourceFile, TaskGroup
 from app.models.task import Task
-from app.models.user import Role, User, UserRole
+from app.models.user import User
 from app.schemas.project import (
-    ActivityItem, AssignmentResponse, AssignProjectManager, PersonBrief, ProjectCreate,
+    ActivityItem, AssigneeSuggestionRequest, AssignmentResponse, AssignProjectManager, DocumentKind,
+    DocumentResponse, DocumentSaved, DocumentUpdate, EvaluationStatus, JobQueued, PersonBrief, ProjectCreate,
     ProjectDetail, ProjectSummary, ProjectUpdate, RemovalResponse, SourceFileUploadResponse, TaskCreate,
     TaskGroupCreate, TaskGroupResponse, TaskGroupUpdate, TaskMutationResponse, TaskResponse,
 )
 from app.schemas.gantt import GanttResponse, GanttVersionBrief, ProjectTree
-from app.services import gantt_service
+from app.services import ai_jobs, ai_service, gantt_service, jobs
 from app.services import project_service as svc
 from app.services.extraction import (
     MAX_SOURCE_FILE_BYTES, UnsupportedFile, extension_of, extract_text,
@@ -282,16 +283,11 @@ async def remove_project_manager(
 @router.get("/{project_id}/candidates", response_model=list[PersonBrief],
             summary="Employees who can be given a role or a task here")
 async def list_candidates(access: ProjectAccess = Depends(project_access), db: AsyncSession = Depends(get_db)):
-    """For the owner's PM picker and the Project Manager's assignee picker. AI ranking is Phase 5."""
+    """For the owner's PM picker and the Project Manager's assignee picker; AI ranking is the suggest-* jobs."""
     if not (access.is_owner or access.is_project_manager):
         from app.exceptions import InsufficientPermissionsException
         raise InsufficientPermissionsException()
-    users = (await db.execute(
-        select(User).join(UserRole, UserRole.user_id == User.id).join(Role, Role.id == UserRole.role_id)
-        .where(Role.role_name == "Employee", User.deleted_at.is_(None), User.status == "Active")
-        .order_by(User.name)
-    )).scalars().unique().all()
-    return [svc.person(u) for u in users]
+    return [svc.person(u) for u in await svc.active_employees(db)]
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -446,3 +442,169 @@ async def get_gantt(
 async def list_gantt_versions(access: ProjectAccess = Depends(project_access), db: AsyncSession = Depends(get_db)):
     return [{"version": r.version, "generated_reason": r.generated_reason, "generated_at": r.generated_at}
             for r in await gantt_service.versions(db, access.project.id)]
+
+
+# ══════════════════════════════════════════════════════════════════
+#  AI PIPELINE (Phase 5) — every route enqueues and returns a job id
+#  (CORE.md §2 rule 1); nothing here awaits the model.
+# ══════════════════════════════════════════════════════════════════
+
+async def _require_ai(db: AsyncSession) -> None:
+    if not await ai_service.ai_configured(db):
+        raise ai_service.AINotConfigured()
+
+
+def _enqueue_or_503(name: str, *args) -> str:
+    try:
+        return jobs.enqueue(name, *args)
+    except Exception as exc:  # broker down — say so instead of leaving a job that never runs
+        raise TraceException(503, f"The job queue is unavailable ({exc.__class__.__name__}); try again shortly") from exc
+
+
+@router.post("/{project_id}/evaluate", response_model=JobQueued, status_code=status.HTTP_202_ACCEPTED,
+             summary="Evaluate Project — source files → documents, task groups, Gantt v1 (owner)")
+async def evaluate_project(
+    access: ProjectAccess = Depends(project_access),
+    github: GitHubClient | None = Depends(get_github_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """CORE.md §3. Refused while running, without source text, or once the project has tasks."""
+    access.require_owner()
+    await _require_ai(db)
+    require_github(github)
+    project = access.project
+    if project.status == "Evaluating":
+        raise TraceException(409, "This project is already being evaluated")
+    has_text = (await db.execute(select(func.count(ProjectSourceFile.id)).where(
+        ProjectSourceFile.project_id == project.id, ProjectSourceFile.deleted_at.is_(None),
+        func.length(func.coalesce(ProjectSourceFile.extracted_text, "")) > 0,
+    ))).scalar()
+    if not has_text:
+        raise TraceException(409, "Upload at least one requirement document with readable text first")
+    if (await db.execute(select(func.count(Task.id)).where(
+            Task.project_id == project.id, Task.deleted_at.is_(None)))).scalar():
+        raise TraceException(409, "This project already has tasks, so evaluating it again would replace task "
+                                  "groups that hold work. Edit the project document instead — it re-plans the Gantt")
+
+    previous = project.status
+    project.status = "Evaluating"
+    ai_jobs.set_ai_error(project, "evaluate_project", None)
+    await db.commit()
+    try:
+        return {"job_id": jobs.enqueue("evaluate_project", project.id)}
+    except Exception as exc:
+        project.status = previous
+        ai_jobs.set_ai_error(project, "evaluate_project", f"Could not queue the evaluation ({exc.__class__.__name__})")
+        await db.commit()
+        raise TraceException(503, "The job queue is unavailable; try again shortly") from exc
+
+
+@router.get("/{project_id}/evaluate/status", response_model=EvaluationStatus,
+            summary="Evaluation state: idle, running or failed (with the reason)")
+async def evaluation_status(access: ProjectAccess = Depends(project_access)):
+    project = access.project
+    error = (project.ai_errors or {}).get("evaluate_project")
+    state = "running" if project.status == "Evaluating" else "failed" if error else "idle"
+    return {"state": state, "error": error["message"] if error else None,
+            "project_status": project.status, "last_evaluated_at": project.last_evaluated_at}
+
+
+@router.post("/{project_id}/suggest-managers", response_model=JobQueued, status_code=status.HTTP_202_ACCEPTED,
+             summary="AI-ranked Project Manager candidates (owner) — poll /services/task/{job_id}/result")
+async def suggest_managers(access: ProjectAccess = Depends(project_access), db: AsyncSession = Depends(get_db)):
+    """Suggestions only — the owner still appoints (CORE.md §2 rule 3)."""
+    access.require_owner()
+    await _require_ai(db)
+    return {"job_id": _enqueue_or_503("suggest_managers", access.project.id)}
+
+
+@router.post("/{project_id}/tasks/suggest-assignees", response_model=JobQueued,
+             status_code=status.HTTP_202_ACCEPTED,
+             summary="AI-ranked assignees for a draft task (Project Manager)")
+async def suggest_assignees(
+    data: AssigneeSuggestionRequest,
+    access: ProjectAccess = Depends(project_access),
+    db: AsyncSession = Depends(get_db),
+):
+    access.require_project_manager()
+    await _require_ai(db)
+    return {"job_id": _enqueue_or_503("suggest_assignees", access.project.id, data.title, data.description)}
+
+
+@router.post("/{project_id}/task-groups/{group_id}/suggest-tasks", response_model=JobQueued,
+             status_code=status.HTTP_202_ACCEPTED, summary="AI-suggested tasks for a task group (Project Manager)")
+async def suggest_tasks(
+    group_id: int,
+    access: ProjectAccess = Depends(project_access),
+    db: AsyncSession = Depends(get_db),
+):
+    access.require_project_manager()
+    await svc.group_in_project(db, access.project.id, group_id)
+    await _require_ai(db)
+    return {"job_id": _enqueue_or_503("suggest_tasks", group_id)}
+
+
+@router.post("/{project_id}/gantt/reevaluate", response_model=JobQueued, status_code=status.HTTP_202_ACCEPTED,
+             summary="Re-plan the Gantt now (Project Manager)")
+async def reevaluate_gantt(access: ProjectAccess = Depends(project_access)):
+    access.require_project_manager()
+    try:
+        return {"job_id": gantt_service.request_reevaluation(access.project.id, "manual", manual=True)}
+    except Exception as exc:
+        raise TraceException(503, "The job queue is unavailable; try again shortly") from exc
+
+
+@router.post("/{project_id}/progress-report", response_model=JobQueued, status_code=status.HTTP_202_ACCEPTED,
+             summary="Rewrite the progress document and report now (owner or Project Manager)")
+async def refresh_progress_report(
+    access: ProjectAccess = Depends(project_access),
+    github: GitHubClient | None = Depends(get_github_client),
+    db: AsyncSession = Depends(get_db),
+):
+    if not (access.is_owner or access.is_project_manager):
+        from app.exceptions import InsufficientPermissionsException
+        raise InsufficientPermissionsException()
+    await _require_ai(db)
+    require_github(github)
+    return {"job_id": _enqueue_or_503("update_project_progress_doc", access.project.id)}
+
+
+# ── Project documents (CORE.md §10) ──────────────────────────────
+
+@router.get("/{project_id}/documents/{kind}", response_model=DocumentResponse,
+            summary="A project document's markdown, read from the repository")
+async def get_document(
+    kind: DocumentKind,
+    access: ProjectAccess = Depends(project_access),
+    github: GitHubClient | None = Depends(get_github_client),
+):
+    project = access.project
+    url = getattr(project, ai_jobs.DOC_COLUMNS[kind])
+    if not url:
+        return {"kind": kind, "url": None, "content": None}
+    content = await ai_jobs.read_document(require_github(github), project, ai_jobs.DOC_PATHS[kind])
+    return {"kind": kind, "url": url, "content": content}
+
+
+@router.put("/{project_id}/documents/doc", response_model=DocumentSaved,
+            summary="Save the project document (Project Manager) — re-plans the Gantt when it changed")
+async def save_project_doc(
+    data: DocumentUpdate,
+    access: ProjectAccess = Depends(project_access),
+    github: GitHubClient | None = Depends(get_github_client),
+    db: AsyncSession = Depends(get_db),
+):
+    access.require_project_manager()
+    project, github = access.project, require_github(github)
+    if not project.project_doc:
+        raise TraceException(409, "There is no project document yet — the project has to be evaluated first")
+    current = await ai_jobs.read_document(github, project, ai_jobs.DOC_PATHS["doc"])
+    content = data.content if data.content.endswith("\n") else data.content + "\n"
+    if current is not None and current.strip() == content.strip():
+        return {"kind": "doc", "url": project.project_doc, "content": current, "changed": False}
+    project.project_doc = await github.commit_file(
+        project.github_repo, ai_jobs.DOC_PATHS["doc"], content,
+        f"TRACE: docs/project_doc.md (edited by {access.user.name})", project.github_default_branch)
+    await db.commit()
+    gantt_service.request_reevaluation(project.id, "project_doc_updated")  # CORE.md §5
+    return {"kind": "doc", "url": project.project_doc, "content": content, "changed": True}

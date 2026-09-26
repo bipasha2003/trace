@@ -245,7 +245,7 @@ async def dashboard_stats(
 
     task_delayed = (await db.execute(
         select(func.count(Task.id)).where(
-            Task.status == "Delayed", Task.deleted_at.is_(None)
+            Task.status == "Overdue", Task.deleted_at.is_(None)
         )
     )).scalar() or 0
 

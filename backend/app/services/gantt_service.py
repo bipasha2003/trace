@@ -1,9 +1,11 @@
 """
-TRACE - Project tree and Gantt (Phase 4)
+TRACE - Project tree and Gantt (Phases 4–5)
 
 The tree is a live read over project → task groups → tasks (PROJECT.md §21).
 The Gantt is a stored, versioned snapshot in `gantt_charts` (CORE.md §5): every
 version is validated against `GanttChartData` and written as a new row, never patched.
+`schedule` is the re-planning rule and `request_reevaluation` the one trigger call
+(CORE.md §5, "As built").
 """
 
 from datetime import date, datetime, timedelta, timezone
@@ -15,9 +17,11 @@ from sqlalchemy.orm import selectinload
 from app.models.project import GanttChart, Project, TaskGroup
 from app.models.task import Task
 from app.schemas.gantt import GanttChartData
+from app.services import jobs
 from app.services.project_service import OPEN_STATUSES, person
 
 DEFAULT_GROUP_DAYS = 7
+DEBOUNCE_SECONDS = 30
 
 
 def is_overdue(task: Task, today: date | None = None) -> bool:
@@ -98,7 +102,37 @@ def build_chart_data(project: Project, groups: list[tuple[TaskGroup, list[Task]]
     })
 
 
-async def save_version(db: AsyncSession, project_id: int, data: GanttChartData | dict, reason: str) -> GanttChart:
+def schedule(groups: list[TaskGroup], start: date, today: date | None = None) -> None:
+    """Re-plan the groups' dates in place (CORE.md §5 scheduling rule)."""
+    today = today or date.today()
+    ends: dict[int, date] = {}
+    for g in sorted(groups, key=lambda g: (g.sequence, g.id or 0)):
+        begin = g.planned_start_date or start
+        after = max((ends[d] for d in (g.depends_on or []) if d in ends), default=None)
+        if after is not None and begin <= after:
+            begin = after + timedelta(days=1)
+        if g.estimated_duration_days:
+            days = g.estimated_duration_days
+        elif g.planned_start_date and g.planned_end_date:
+            days = (g.planned_end_date - g.planned_start_date).days + 1
+        else:
+            days = DEFAULT_GROUP_DAYS
+        end = begin + timedelta(days=max(days, 1) - 1)
+        if g.status == "Completed" and g.actual_end_date:
+            end = max(begin, g.actual_end_date)
+        elif g.status != "Completed" and end < today:
+            end = today  # a slip pushes everything that waits for it
+        g.planned_start_date, g.planned_end_date = begin, end
+        ends[g.id] = end
+
+
+def dependencies_of(groups: list[TaskGroup]) -> list[tuple[int, int]]:
+    ids = {g.id for g in groups}
+    return [(d, g.id) for g in groups for d in (g.depends_on or []) if d in ids and d != g.id]
+
+
+async def save_version(db: AsyncSession, project_id: int, data: GanttChartData | dict, reason: str,
+                       job_id: str | None = None) -> GanttChart:
     """Validate, then write the next version. Caller commits."""
     chart_data = (data if isinstance(data, GanttChartData) else GanttChartData.model_validate(data)).dump()
     latest = (await db.execute(
@@ -106,17 +140,18 @@ async def save_version(db: AsyncSession, project_id: int, data: GanttChartData |
                                                    GanttChart.deleted_at.is_(None))
     )).scalar() or 0
     row = GanttChart(project_id=project_id, version=latest + 1, chart_data=chart_data,
-                     generated_reason=reason, generated_at=datetime.now(timezone.utc))
+                     generated_reason=reason, generated_at=datetime.now(timezone.utc),
+                     generated_by_job=job_id)
     db.add(row)
     await db.flush()
     return row
 
 
-async def snapshot(db: AsyncSession, project: Project, reason: str,
-                   dependencies: list[tuple[int, int]] | None = None) -> GanttChart:
-    """Build chart_data from the project's current groups and save it as a new version."""
+async def snapshot(db: AsyncSession, project: Project, reason: str, job_id: str | None = None) -> GanttChart:
+    """Build chart_data from the project's current groups (and their depends_on) and save it."""
     groups = await groups_with_tasks(db, project.id)
-    return await save_version(db, project.id, build_chart_data(project, groups, dependencies), reason)
+    deps = dependencies_of([g for g, _ in groups])
+    return await save_version(db, project.id, build_chart_data(project, groups, deps), reason, job_id)
 
 
 async def versions(db: AsyncSession, project_id: int) -> list[GanttChart]:
@@ -124,3 +159,10 @@ async def versions(db: AsyncSession, project_id: int) -> list[GanttChart]:
         select(GanttChart).where(GanttChart.project_id == project_id, GanttChart.deleted_at.is_(None))
         .order_by(GanttChart.version.desc())
     )).scalars().all())
+
+
+def request_reevaluation(project_id: int, reason: str, manual: bool = False) -> str:
+    """The one Gantt trigger (CORE.md §5). Call after committing; bursts collapse into one version."""
+    requested_at = datetime.now(timezone.utc).isoformat()
+    return jobs.enqueue("reevaluate_gantt", project_id, reason, requested_at,
+                        countdown=0 if manual else DEBOUNCE_SECONDS)

@@ -1,6 +1,7 @@
 /**
  * TRACE — Projects API
- * Projects, source files, team, task groups, project-scoped tasks, tree and Gantt.
+ * Projects, source files, team, task groups, project-scoped tasks, tree and Gantt,
+ * and the AI pipeline — its actions return { job_id } (wait with lib/jobs.waitForJob).
  */
 
 import api from './client'
@@ -41,6 +42,19 @@ export const projectsApi = {
   /** latest version, or `version`; resolves to null data before the first one */
   gantt: (id, version) => api.get(`/projects/${id}/gantt`, { params: version ? { version } : {} }),
   ganttVersions: (id) => api.get(`/projects/${id}/gantt/versions`),
+  reevaluateGantt: (id) => api.post(`/projects/${id}/gantt/reevaluate`),
+
+  evaluate: (id) => api.post(`/projects/${id}/evaluate`),
+  evaluateStatus: (id) => api.get(`/projects/${id}/evaluate/status`),
+  suggestManagers: (id) => api.post(`/projects/${id}/suggest-managers`),
+  suggestAssignees: (id, title, description) =>
+    api.post(`/projects/${id}/tasks/suggest-assignees`, { title, description }),
+  suggestTasks: (id, groupId) => api.post(`/projects/${id}/task-groups/${groupId}/suggest-tasks`),
+  refreshProgressReport: (id) => api.post(`/projects/${id}/progress-report`),
+
+  /** kind: initial | doc | progress | report → { url, content } (content null until generated) */
+  document: (id, kind) => api.get(`/projects/${id}/documents/${kind}`),
+  saveProjectDoc: (id, content) => api.put(`/projects/${id}/documents/doc`, { content }),
 }
 
 export default projectsApi

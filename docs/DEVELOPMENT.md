@@ -20,14 +20,15 @@
 | 3 · Projects, without AI | ✅ built and tested — see its status note for what is unverified |
 | 3a · GitHub owner model | ✅ built, tested, and verified against real GitHub (opt-in live test) |
 | 4 · Visualisation | ✅ built and tested; not browser-checked (user decision) |
-| **5 · The AI pipeline** | 🔲 **next** — read *Starting Phase 5* below |
-| 7 – 9 | 🔲 not started. Phase 8 may run in parallel |
+| 5 · The AI pipeline | ✅ built and tested against a fake model — **never run against a real model yet**; not browser-checked |
+| **7 · Notifications & discussion** | 🔲 **next** — read *Starting Phase 7* below |
+| 8 – 9 | 🔲 not started. Phase 8 may run in parallel |
 | ~~6 · CI/CD-driven completion~~ | ❌ **removed** 2026-09-26 — the assignee marks their own task complete ([`CORE.md`](CORE.md) §7) |
 
 **Verify before you trust this table** — facts that change outside the docs:
 - `git log --oneline -5` and `git status` — what is committed; untracked files are
   how Phase 2 once went missing from `main`.
-- `cd backend && .venv/bin/python -m pytest -q` — 326 passing and 2 skipped at handoff (the skips are the opt-in live GitHub test). The suite
+- `cd backend && .venv/bin/python -m pytest -q` — 374 passing and 2 skipped at handoff (the skips are the opt-in live GitHub test). The suite
   uses its own `trace_test` database (built by Alembic) and fakes GitHub and MinIO,
   so it is safe to run anywhere — but it needs the Compose `db` **and** `redis`
   services up (`docker compose up -d db redis`); without Redis three job-poll tests
@@ -49,10 +50,18 @@
   secret unreadable** (re-enter them). Don't regenerate it casually.
 - `cryptography` was added to `requirements.txt` — reinstall the venv
   (`pip install -r requirements.txt`) on any other checkout before starting.
-- `@xyflow/react` was added to `frontend/package.json` in Phase 4 — run `npm install`
-  in `frontend/` on any other checkout.
-- The local database is at Alembic head `c4e1d2a7f9b3` (drops `cicd_events`). A
-  database that runs production must be migrated too — `./start.sh start` does it.
+- `@xyflow/react` (Phase 4) and `react-markdown` + `remark-gfm` (Phase 5) were added
+  to `frontend/package.json` — run `npm install` in `frontend/` on any other checkout.
+- The local database is at Alembic head `f3c4d5e6a7b8` (Phase 5: `projects.ai_errors`,
+  `tasks.progress_doc_error`, `task_groups.depends_on`, `gantt_charts.generated_by_job`
+  — all additive). A database that runs production must be migrated too —
+  `./start.sh start` does it.
+- **The real AI has not been exercised.** The root `.env` has an `OPENAI_API_KEY`
+  (never print it). Running Evaluate Project for real calls the model (costs money)
+  **and commits documents to a real public repo** — ask the user first. It needs the
+  Celery worker running (`./start.sh start` runs it) or the project sits in
+  `Evaluating`; there is no automatic recovery from a dead worker — reset the status
+  by hand in the Control Panel.
 - Only the Admin can create Admin / Manager accounts. Production does not seed demo
   users, and refuses to start while any seeded account still has its published
   password — change them with `./start.sh set-password <email>` (README → Production).
@@ -71,43 +80,31 @@
 - There is no delete-project button — `DELETE /projects/{id}` is API-only.
 
 *Owned by later phases, not gaps in 0–3a:*
-- `services/scoring_service.py` still reads the dropped `Task.assigned_to` —
-  `/productivity/compute*` fails until Phase 5 step 3 re-bases scoring.
 - `components/ServiceMonitor.jsx` links to Mailpit / MinIO / pgAdmin at `localhost` — Phase 8.
-- Progress Report and Project Doc tabs are placeholders — Phase 5.
-- **Nothing generates Gantt versions yet.** Only the demo project has one (hand-written
-  v1); every other project shows "No Gantt chart yet" until Phase 5.
-- The nightly `mark_delayed_tasks` (`app/tasks.py`, Celery Beat) is pre-re-spec: it
-  sets past-due `Pending` / `WIP` tasks to **`Delayed`**, a status that no longer
-  exists. Harmless only while Beat is not running. Phase 7 step 5 replaces it with
-  `mark_overdue_tasks` (`CORE.md` §8) — do that early if Beat is started.
+- `mark_overdue_tasks` flips tasks to `Overdue` but sends no notification — Phase 7.
+  Moving a task's due date later does not clear `Overdue`; the PM sets a status.
+- The task progress document is written once; its checklist is not ticked off as
+  work moves (`CORE.md` §4). AI settings come from `.env` only and will stay there —
+  Phase 8 removes the `ai.*` rows from `system_settings` resolution.
 - Old pages `AttendancePage`, `EmployeesPage`, `ProductivityPage`, `AdminPanelPage`,
   `FilesPage`, `SettingsPage` are unrouted; Phase 8 rebuilds or deletes them.
 
 *Not planned* (user decision, `PLANNING.md` §4): removing Members from a project,
 a resend-invitation action. Don't build them unasked.
 
-**Starting Phase 5** — what the phase text below does not tell you
-- **Read `CORE.md` in full first** — it changed on 2026-09-26: completion is manual
-  (§7, no CI/CD, no AI), and §5.1 now fixes the `chart_data` shape.
-- **The Gantt plumbing exists; only the AI is missing.** `gantt_service.snapshot(db,
-  project, reason, dependencies)` builds a valid version from the task groups and
-  saves it; `save_version()` validates anything else against `GanttChartData`.
-  Stage 1 step 6 = write dates/durations into the task groups, then `snapshot(...,
-  "initial", dependencies=...)`. `reevaluate_gantt` needs its triggers wired:
-  `project_service.set_status` (→ Completed), the overdue sweep, a `project_doc`
-  save, and a manual button — debounced (CORE §5).
-- **`task_groups` has no dependency column.** The AI's `depends_on` (CORE §3 step 5)
-  names groups; decide whether to add a column (one Alembic revision) so
-  re-evaluations keep the dependencies, and log it in `PLANNING.md` §2.
-- **There is no AI service layer yet** — only `llm_chat_task` in `app/tasks.py`,
-  which reads `OPENAI_*` straight from `Settings`. Step 1 must resolve credentials
-  through `resolve_setting(db, "ai", …)` (the `ai.api_key` secret is already in
-  `SECRET_SETTINGS`) and validate every response against a schema (AGENTS.md §4).
-  Tests must fake the model the way `fake_github` fakes GitHub — no real LLM calls.
-- `services/scoring_service.py` still reads the dropped `Task.assigned_to` — step 3
-  re-bases it on task signals only (no CI/CD any more).
-- Every AI action is enqueue-and-poll (AGENTS.md §5); the job-result endpoint exists.
+**Starting Phase 7** — what the phase text below does not tell you
+- **Notification hooks already exist as call sites.** `project_service.notify_assignment`
+  writes `notifications` rows on assignment; completion (`set_status`), the overdue
+  sweep (`project_service.mark_overdue_tasks`) and evaluation finishing
+  (`ai_jobs.run_evaluate_project`) are where the other CORE §9 events belong —
+  add them there, after the commit, like the Gantt trigger.
+- **Step 5 is half done:** `mark_overdue_tasks` exists and is scheduled; it still
+  needs its notifications. `task_due_reminders` is not built.
+- Enqueue background work with `jobs.enqueue(...)`, never `.delay()` — tests
+  replace it (`jobs_sent`), and a dev worker would otherwise run test messages
+  against the dev database.
+- Email already goes through `send_mail_task`, which reads SMTP straight from
+  Settings — Phase 8 moves mail to `resolve_setting` with the Configuration page.
 
 ---
 
@@ -503,7 +500,7 @@ checked in a browser — the user decided that is not required.*
 
 ---
 
-## Phase 5 — The AI pipeline
+## Phase 5 — The AI pipeline ✅
 
 **Read [`CORE.md`](CORE.md) in full before starting.** Implement in its order.
 
@@ -525,6 +522,17 @@ checked in a browser — the user decided that is not required.*
 **Done when:** uploading requirement documents and pressing Evaluate Project
 produces a project document, task groups and a Gantt chart.
 
+**Status (2026-09-26): ✅ built and tested against a fake model** — see
+[`CORE.md`](CORE.md) §2.1 and the "As built" notes in §3–§8 for how each step was
+implemented, and [`PLANNING.md`](PLANNING.md) §2 for the choices (suggestions on
+demand, `depends_on` column, re-evaluation refused once tasks exist, deterministic
+re-plans with the AI only on document changes). The "Done when" is proven by
+`test_evaluation_writes_documents_groups_and_gantt_v1` against `fake_ai` +
+`fake_github`; it has **not** been run with a real model and a real repository
+(needs the user's go-ahead: it costs model calls and commits to a public repo).
+Step 3 also replaced `mark_delayed_tasks` with `mark_overdue_tasks` (the overdue
+trigger of step 6).
+
 ---
 
 ## Phase 6 — CI/CD-driven completion ❌ removed
@@ -541,6 +549,8 @@ There is no webhook, no resolver job and no CI/CD configuration section. Don't r
 
 ## Phase 7 — Notifications & discussion
 
+*User direction (2026-09-26): small phase — build it straight, no extras.*
+
 1. The `notifications` API, header bell, unread count, deep links.
 2. Assignment, due-soon, overdue and completion notifications, in-app and via
    Mailpit ([`CORE.md`](CORE.md) §9) — including a task completed by its assignee
@@ -549,7 +559,9 @@ There is no webhook, no resolver job and no CI/CD configuration section. Don't r
    [`PROJECT.md`](PROJECT.md) §11.6.
 4. Re-point the existing WebSocket from group chat to notifications and discussion.
 5. Set the Celery Beat schedule per [`CORE.md`](CORE.md) §8; retire the hourly
-   health job and the nightly overallocation job.
+   health job and the nightly overallocation job. *(Partly done in Phase 5:
+   `mark_overdue_tasks` and the weekly `update_project_progress_docs` are scheduled;
+   `task_due_reminders` and the overdue notifications remain.)*
 
 **Done when:** an assignment, a due date and a completion each reach the
 right people without anyone refreshing a page.
@@ -560,29 +572,41 @@ right people without anyone refreshing a page.
 
 May run in parallel with Phases 4–7.
 
-1. The Configuration screen over `system_settings` — mail and AI (GitHub
-   already built in Phase 3a) — with write-only secrets and per-section connection tests.
+1. The Configuration screen over `system_settings` — **mail** (GitHub already built
+   in Phase 3a) — with write-only secrets and a connection test. **No AI section:**
+   the LLM key, model and base URL are fixed in `.env` and no Admin can change them
+   (user decision 2026-09-26). Remove `ai.*` from `system_settings` resolution
+   (`ENV_FALLBACKS`, `SECRET_SETTINGS`) so `ai_service` and `llm_chat_task` read
+   `Settings` only; Configuration may show the model read-only.
 2. Workforce consolidation into one curated UI with tabs for employees, managers,
    leaves, holidays, **attendance, shifts**, departments and designations. Every
    tab gets CRUD plus **bulk upload** that reports rejected rows instead of failing
    silently. This is where `AttendancePage.jsx` is reborn, minus clock-in/out.
 3. Control Panel extended to the new tables.
 4. Monitor as a page, including recent Celery job outcomes.
-5. Reports — **blocked on Q7**. Ship the placeholder route and nothing more.
+5. **Reports on the dashboards, not a Reports page** (Q7, answered 2026-09-26). No
+   scheduled report: retire `send_weekly_report` and its Beat entry, and remove the
+   Admin → Reports route. Instead the dashboards get **Download report** — the
+   project → task group → task tree for a chosen date range, as a file. Scope and
+   format are assumptions in `PLANNING.md` Q7 — confirm them before building.
+   `ProductivityPage.jsx` is deleted, not folded.
 
-**Done when:** an Admin can change the AI model and the SMTP host without touching
-`.env` or redeploying.
+**Done when:** an Admin can change the SMTP host without touching `.env` or
+redeploying (the LLM configuration stays fixed in `.env`), and a Manager can
+download a project report for a date range from their dashboard.
 
 ---
 
 ## Phase 9 — Polish
 
-1. Responsive and mobile passes on all three panels.
+1. ~~Responsive and mobile passes on all three panels.~~ **Not required** (user
+   decision 2026-09-26) — keep new pages usable, but no dedicated pass.
 2. Pagination on every list (employees, tasks, attendance, projects).
 3. Global search wired to projects and tasks.
 4. Empty and error states for every AI-dependent surface — a project with no
    evaluation yet, a failed evaluation, a task with no progress doc.
-5. A sweep to confirm no page still renders a removed feature.
+5. A revision sweep: confirm no page still renders a removed feature, and that
+   the docs still describe the code (user: "yup do a revision").
 
 ---
 
@@ -593,7 +617,6 @@ work in [`PLANNING.md`](PLANNING.md) §3:
 
 | Item | Deferred to | Why |
 |------|-------------|-----|
-| Admin → Reports contents | After Q7 is answered | Undefined; nothing depends on it |
 | Task dependency editing | After Phase 4 | The AI infers `depends_on`; manual editing can wait |
 | Bulk task creation from AI suggestions | Phase 5 follow-up | Single-task acceptance first |
 | Pagination, global search | Phase 9 | Lists are short at demo scale |

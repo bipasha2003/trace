@@ -199,6 +199,19 @@ class GitHubClient:
         }
         await self._request("update the issue state", "PATCH", f"/repos/{repo}/issues/{number}", json=payload)
 
+    async def read_file(self, repo: str, path: str, branch: str = "main") -> str | None:
+        """A file's text on `branch`, or None if it does not exist."""
+        try:
+            async with self._client() as client:
+                response = await client.get(f"/repos/{repo}/contents/{path}", params={"ref": branch})
+        except httpx.HTTPError as exc:
+            raise GitHubError("read the file", reason=f"network error ({exc.__class__.__name__})") from exc
+        if response.status_code == 404:
+            return None
+        if response.status_code >= 400:
+            raise GitHubError("read the file", response)
+        return base64.b64decode(response.json().get("content", "")).decode("utf-8", errors="replace")
+
     async def commit_file(self, repo: str, path: str, content: str, message: str,
                           branch: str = "main") -> str:
         """Create or update a file on `branch`; returns its html URL."""

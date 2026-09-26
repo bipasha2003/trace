@@ -2,10 +2,14 @@
 TRACE - Celery Background Tasks
 Scheduled and on-demand tasks for the TRACE system.
 
-Tasks:
-1. mark_delayed_tasks — Nightly: marks overdue tasks as "Delayed"
-2. compute_all_weekly_scores — Weekly: runs AI scoring for all employees
-3. send_weekly_report — Weekly: emails the performance report to admin
+Scheduled (celery_app.beat_schedule):
+- mark_overdue_tasks — nightly: open past-due tasks → Overdue, Gantt re-plan
+- compute_all_weekly_scores — weekly: task-signal scores for every Employee
+- update_project_progress_docs — weekly: the AI progress roll-up per Active project
+- send_weekly_report — weekly: the performance report
+
+On demand: the AI pipeline (evaluate_project, generate_task_progress_doc,
+reevaluate_gantt, suggest_*), mail, MinIO upload, LLM test, task health.
 """
 
 import asyncio
@@ -27,52 +31,99 @@ def _run_async(coro):
 
 
 # ══════════════════════════════════════════════════════════════════
-#  TASK 1: Mark Delayed Tasks (Nightly)
+#  TASK 1: Mark Overdue Tasks (Nightly) — CORE.md §8
 # ══════════════════════════════════════════════════════════════════
 
-@celery_app.task(name="app.tasks.mark_delayed_tasks", bind=True, max_retries=3)
-def mark_delayed_tasks(self):
-    """
-    Runs nightly at 11 PM.
-    Finds all tasks past their due_date that are still Pending/WIP
-    and marks them as "Delayed".
-    """
+@celery_app.task(name="app.tasks.mark_overdue_tasks", bind=True, max_retries=3)
+def mark_overdue_tasks(self):
+    """Flip open past-due tasks to Overdue, then re-plan each affected project's Gantt."""
     async def _mark():
-        from sqlalchemy import select, update
-        from app.database import async_session_factory
-        from app.models.task import Task
+        from app.services.jobs import job_session
+        from app.services.project_service import mark_overdue_tasks as mark
 
-        today = date.today()
-        async with async_session_factory() as db:
-            try:
-                result = await db.execute(
-                    update(Task)
-                    .where(
-                        Task.due_date < today,
-                        Task.status.in_(["Pending", "WIP"]),
-                        Task.deleted_at.is_(None),
-                    )
-                    .values(status="Delayed")
-                    .returning(Task.id)
-                )
-                delayed_ids = [row[0] for row in result.all()]
-                await db.commit()
+        async with job_session() as db:
+            return await mark(db, date.today())
 
-                logger.info(
-                    f"[mark_delayed_tasks] Marked {len(delayed_ids)} tasks as Delayed: {delayed_ids}"
-                )
-                return {
-                    "status": "success",
-                    "date": today.isoformat(),
-                    "tasks_delayed": len(delayed_ids),
-                    "task_ids": delayed_ids,
-                }
-            except Exception as e:
-                await db.rollback()
-                logger.error(f"[mark_delayed_tasks] Failed: {e}")
-                raise self.retry(exc=e, countdown=60)
+    try:
+        return _run_async(_mark())
+    except Exception as e:
+        logger.error(f"[mark_overdue_tasks] Failed: {e}")
+        raise self.retry(exc=e, countdown=60)
 
-    return _run_async(_mark())
+
+# ══════════════════════════════════════════════════════════════════
+#  AI PIPELINE — CORE.md §3–6. The bodies are in app/services/ai_jobs.py;
+#  these only open a session and build the AI and GitHub clients.
+# ══════════════════════════════════════════════════════════════════
+
+def _ai_job(task, runner: str, *args):
+    async def _run():
+        from app.services import ai_jobs, ai_service
+        from app.services.github_service import get_github_client
+        from app.services.jobs import job_session
+
+        async with job_session() as db:
+            ai = await ai_service.client_from_settings(db) if await ai_service.ai_configured(db) else None
+            github = await get_github_client(db)
+            return await getattr(ai_jobs, runner)(db, *args, job_id=task.request.id, ai=ai, github=github)
+
+    return _run_async(_run())
+
+
+@celery_app.task(name="app.tasks.evaluate_project", bind=True)
+def evaluate_project(self, project_id: int):
+    return _ai_job(self, "run_evaluate_project", project_id)
+
+
+@celery_app.task(name="app.tasks.generate_task_progress_doc", bind=True)
+def generate_task_progress_doc(self, task_id: int):
+    return _ai_job(self, "run_task_progress_doc", task_id)
+
+
+@celery_app.task(name="app.tasks.reevaluate_gantt", bind=True)
+def reevaluate_gantt(self, project_id: int, reason: str, requested_at: str):
+    return _ai_job(self, "run_reevaluate_gantt", project_id, reason, requested_at)
+
+
+@celery_app.task(name="app.tasks.update_project_progress_doc", bind=True)
+def update_project_progress_doc(self, project_id: int):
+    return _ai_job(self, "run_progress_report", project_id)
+
+
+@celery_app.task(name="app.tasks.update_project_progress_docs", bind=True)
+def update_project_progress_docs(self):
+    """Weekly (Beat): one roll-up job per Active project."""
+    async def _ids():
+        from sqlalchemy import select
+        from app.models.project import Project
+        from app.services.jobs import job_session
+
+        async with job_session() as db:
+            return list((await db.execute(select(Project.id).where(
+                Project.status == "Active", Project.deleted_at.is_(None)))).scalars())
+
+    from app.services.jobs import enqueue
+    ids = _run_async(_ids())
+    for project_id in ids:
+        enqueue("update_project_progress_doc", project_id)
+    return {"status": "success", "projects": ids}
+
+
+# Suggestions: the result *is* the answer (polled via /services/task/{id}/result); nothing is written
+
+@celery_app.task(name="app.tasks.suggest_managers", bind=True)
+def suggest_managers(self, project_id: int):
+    return _ai_job(self, "run_suggest_managers", project_id)
+
+
+@celery_app.task(name="app.tasks.suggest_assignees", bind=True)
+def suggest_assignees(self, project_id: int, title: str, description: str | None = None):
+    return _ai_job(self, "run_suggest_assignees", project_id, title, description)
+
+
+@celery_app.task(name="app.tasks.suggest_tasks", bind=True)
+def suggest_tasks(self, group_id: int):
+    return _ai_job(self, "run_suggest_tasks", group_id)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -83,19 +134,18 @@ def mark_delayed_tasks(self):
 def compute_all_weekly_scores(self):
     """
     Runs every Sunday at 11:30 PM.
-    Computes productivity scores for all active employees for the
-    current week using the AI scoring engine.
+    Scores every active Employee's week on task signals (CORE.md §8).
     """
     async def _compute():
         from sqlalchemy import select
-        from app.database import async_session_factory
         from app.models.employee import Employee
+        from app.services.jobs import job_session
         from app.services.scoring_service import ScoringService
 
         today = date.today()
         week_start = today - timedelta(days=today.weekday())
 
-        async with async_session_factory() as db:
+        async with job_session() as db:
             try:
                 result = await db.execute(
                     select(Employee.id).where(
@@ -326,22 +376,26 @@ def llm_chat_task(self, message: str, model: str = None):
     """
     try:
         from openai import OpenAI
-        from app.config import get_settings
 
-        settings = get_settings()
+        async def _resolve():
+            from app.services.jobs import job_session
+            from app.services.system_settings import resolve_setting
+            async with job_session() as db:
+                return [await resolve_setting(db, "ai", k) for k in ("api_key", "base_url", "model")]
 
-        if not settings.OPENAI_API_KEY:
+        api_key, base_url, default_model = _run_async(_resolve())  # Configuration first, then .env
+        if not api_key:
             return {
                 "status": "error",
-                "error": "OPENAI_API_KEY not configured. Set it in .env to use LLM features.",
+                "error": "AI is not configured. Set it in Admin → Configuration, or OPENAI_API_KEY in .env.",
             }
 
-        client_kwargs = {"api_key": settings.OPENAI_API_KEY}
-        if settings.OPENAI_BASE_URL:
-            client_kwargs["base_url"] = settings.OPENAI_BASE_URL
+        client_kwargs = {"api_key": api_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
 
         client = OpenAI(**client_kwargs)
-        use_model = model or settings.OPENAI_MODEL
+        use_model = model or default_model
 
         response = client.chat.completions.create(
             model=use_model,

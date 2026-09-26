@@ -1,90 +1,71 @@
 """
-TRACE - AI Scoring Service
-Implements the productivity scoring formula from the synopsis.
+TRACE - Performance scoring on task signals (CORE.md §3 ranking inputs, §8)
+
+The weekly score stores two task signals per Employee: throughput (completed ÷
+assigned tasks due that week) and on-time rate (completed by the due date ÷
+completed). Attendance and active time are still recorded elsewhere but are no
+longer inputs — `att_score` and `active_time_score` stay empty.
+
+`candidate_stats` computes the same signals live, over all time, for the people
+the AI ranks as Project Managers or assignees.
 """
 
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.attendance import Attendance
+from app.exceptions import NotFoundException
 from app.models.employee import Employee
 from app.models.productivity import ProductivityScore
-from app.models.task import Task, TaskTimeLog
+from app.models.project import Project, ProjectAssignment
+from app.models.task import Task
+
+OPEN_STATUSES = ("Pending", "In Progress", "In Review", "Blocked", "Overdue")
+
+
+def _on_time(task: Task) -> bool:
+    return task.due_date is None or (task.completed_at is not None and task.completed_at.date() <= task.due_date)
+
+
+def _pct(part: int, whole: int) -> Decimal:
+    return Decimal(str(round(part / whole * 100, 2))) if whole else Decimal("100")
 
 
 class ScoringService:
-    """AI-based productivity scoring engine."""
-
     def __init__(self, db: AsyncSession):
         self.db = db
 
     async def compute_weekly_score(self, employee_id: int, week_start: date) -> ProductivityScore:
-        """
-        Compute productivity score using the synopsis formula:
-        - att_score = (days_present / working_days) * 100
-        - task_score = (tasks_completed / tasks_assigned) * 100
-        - deadline_score = (tasks_on_time / tasks_completed) * 100
-        - active_time_score = (active_time / (shift_time * 0.7)) * 100, capped at 100
-        - final_score = att*0.20 + task*0.30 + deadline*0.20 + active*0.30
-        """
+        """Score the Employee's tasks due in the week starting `week_start`."""
+        employee = await self.db.get(Employee, employee_id)
+        if employee is None or employee.deleted_at is not None:
+            raise NotFoundException("Employee")
         week_end = week_start + timedelta(days=6)
-        working_days = 5  # Mon-Fri
+        tasks = (await self.db.execute(select(Task).where(
+            Task.assigned_to_user_id == employee.user_id, Task.deleted_at.is_(None),
+            Task.status != "Cancelled", Task.due_date >= week_start, Task.due_date <= week_end,
+        ))).scalars().all()
+        completed = [t for t in tasks if t.status == "Completed"]
+        task_score = _pct(len(completed), len(tasks))
+        deadline_score = _pct(sum(1 for t in completed if _on_time(t)), len(completed))
+        final = ((task_score + deadline_score) / 2).quantize(Decimal("0.01"))
 
-        # Attendance score
-        att_count = await self.db.execute(
-            select(func.count(Attendance.id)).where(
-                and_(Attendance.employee_id == employee_id,
-                     Attendance.attendance_date >= week_start,
-                     Attendance.attendance_date <= week_end,
-                     Attendance.deleted_at.is_(None))
-            )
-        )
-        days_present = att_count.scalar() or 0
-        att_score = min(Decimal(str((days_present / working_days) * 100)), Decimal("100"))
+        overdue = (await self.db.execute(select(func.count(Task.id)).where(
+            Task.assigned_to_user_id == employee.user_id, Task.deleted_at.is_(None),
+            Task.status.in_(OPEN_STATUSES), Task.due_date < date.today(),
+        ))).scalar() or 0
+        flags = {}
+        if final < 60:
+            flags["low_score"] = True
+        if overdue >= 3:
+            flags["overdue_tasks"] = overdue
 
-        # Task score
-        tasks_assigned_count = await self._count_tasks(employee_id, week_start, week_end)
-        tasks_completed_count = await self._count_tasks(employee_id, week_start, week_end, status="Completed")
-        task_score = Decimal(str((tasks_completed_count / tasks_assigned_count * 100) if tasks_assigned_count > 0 else 100))
-
-        # Deadline score
-        tasks_on_time = await self._count_on_time_tasks(employee_id, week_start, week_end)
-        deadline_score = Decimal(str((tasks_on_time / tasks_completed_count * 100) if tasks_completed_count > 0 else 100))
-
-        # Active time score
-        total_active = await self._get_active_minutes(employee_id, week_start, week_end)
-        shift_minutes = working_days * 8 * 60  # 8-hour shifts
-        threshold = shift_minutes * 0.7
-        active_time_score = min(Decimal(str((total_active / threshold * 100) if threshold > 0 else 100)), Decimal("100"))
-
-        # Final weighted score
-        final_score = (
-            att_score * Decimal("0.20") +
-            task_score * Decimal("0.30") +
-            deadline_score * Decimal("0.20") +
-            active_time_score * Decimal("0.30")
-        )
-
-        # Rating
-        rating = self._get_rating(final_score)
-
-        # Anomaly detection
-        anomaly_flags = await self._detect_anomalies(
-            employee_id, week_start, week_end, final_score, total_active, shift_minutes
-        )
-
-        # Persist
         score = ProductivityScore(
-            employee_id=employee_id, week_start=week_start,
-            att_score=att_score, task_score=task_score,
-            deadline_score=deadline_score, active_time_score=active_time_score,
-            final_score=final_score.quantize(Decimal("0.01")),
-            rating=rating, anomaly_flags=anomaly_flags,
-            generated_at=datetime.now(timezone.utc),
+            employee_id=employee_id, week_start=week_start, task_score=task_score,
+            deadline_score=deadline_score, final_score=final, rating=self._get_rating(final),
+            anomaly_flags=flags, generated_at=datetime.now(timezone.utc),
         )
         self.db.add(score)
         await self.db.flush()
@@ -94,48 +75,69 @@ class ScoringService:
     def _get_rating(score: Decimal) -> str:
         if score >= 90:
             return "Excellent"
-        elif score >= 75:
+        if score >= 75:
             return "Good"
-        elif score >= 60:
+        if score >= 60:
             return "Average"
         return "Risk"
 
-    async def _count_tasks(self, emp_id: int, start: date, end: date, status: str | None = None) -> int:
-        conditions = [Task.assigned_to == emp_id, Task.created_at >= datetime.combine(start, datetime.min.time()),
-                       Task.created_at <= datetime.combine(end, datetime.max.time()), Task.deleted_at.is_(None)]
-        if status:
-            conditions.append(Task.status == status)
-        result = await self.db.execute(select(func.count(Task.id)).where(*conditions))
-        return result.scalar() or 0
 
-    async def _count_on_time_tasks(self, emp_id: int, start: date, end: date) -> int:
-        result = await self.db.execute(
-            select(func.count(Task.id)).where(
-                Task.assigned_to == emp_id, Task.status == "Completed",
-                Task.due_date.isnot(None), Task.updated_at <= Task.due_date,
-                Task.deleted_at.is_(None),
-            )
-        )
-        return result.scalar() or 0
+async def candidate_stats(db: AsyncSession, user_ids: list[int]) -> dict[int, dict]:
+    """Live ranking inputs per user (CORE.md §3): task record, PM record, latest weekly score."""
+    stats = {uid: {"tasks_completed": 0, "on_time_rate": None, "open_tasks": 0,
+                   "projects_managed": 0, "projects_delivered": 0, "managed_projects_completion": None,
+                   "latest_weekly_score": None, "recent_completed_titles": []} for uid in user_ids}
+    if not user_ids:
+        return stats
 
-    async def _get_active_minutes(self, emp_id: int, start: date, end: date) -> int:
-        result = await self.db.execute(
-            select(func.coalesce(func.sum(TaskTimeLog.active_minutes), 0)).where(
-                TaskTimeLog.employee_id == emp_id,
-                TaskTimeLog.start_time >= datetime.combine(start, datetime.min.time()),
-                TaskTimeLog.start_time <= datetime.combine(end, datetime.max.time()),
-            )
-        )
-        return result.scalar() or 0
+    tasks = (await db.execute(select(Task).where(
+        Task.assigned_to_user_id.in_(user_ids), Task.deleted_at.is_(None), Task.status != "Cancelled",
+    ).order_by(Task.completed_at.desc().nullslast()))).scalars().all()
+    on_time: dict[int, int] = {}
+    for t in tasks:
+        s = stats[t.assigned_to_user_id]
+        if t.status == "Completed":
+            s["tasks_completed"] += 1
+            on_time[t.assigned_to_user_id] = on_time.get(t.assigned_to_user_id, 0) + _on_time(t)
+            if len(s["recent_completed_titles"]) < 10:
+                s["recent_completed_titles"].append(t.title)
+        elif t.status in OPEN_STATUSES:
+            s["open_tasks"] += 1
+    for uid, n in on_time.items():
+        stats[uid]["on_time_rate"] = round(n / stats[uid]["tasks_completed"], 2)
 
-    async def _detect_anomalies(self, emp_id: int, start: date, end: date,
-                                 score: Decimal, active_min: int, shift_min: int) -> dict[str, Any]:
-        flags: dict[str, Any] = {}
-        if score < 60:
-            flags["low_score"] = True
-        delayed = await self._count_tasks(emp_id, start, end, status="Delayed")
-        if delayed >= 3:
-            flags["excessive_delays"] = delayed
-        if shift_min > 0 and (active_min / shift_min) < 0.3:
-            flags["low_active_time"] = round(active_min / shift_min * 100, 1)
-        return flags
+    managed = (await db.execute(
+        select(ProjectAssignment.user_id, Project.id, Project.status)
+        .join(Project, Project.id == ProjectAssignment.project_id)
+        .where(ProjectAssignment.user_id.in_(user_ids), ProjectAssignment.project_role == "Project Manager",
+               ProjectAssignment.deleted_at.is_(None), Project.deleted_at.is_(None))
+    )).all()
+    project_ids = {pid for _, pid, _ in managed}
+    completion: dict[int, float] = {}
+    if project_ids:
+        rows = (await db.execute(
+            select(Task.project_id, func.count(Task.id),
+                   func.count(Task.id).filter(Task.status == "Completed"))
+            .where(Task.project_id.in_(project_ids), Task.deleted_at.is_(None), Task.status != "Cancelled")
+            .group_by(Task.project_id)
+        )).all()
+        completion = {pid: done / total for pid, total, done in rows if total}
+    per_user: dict[int, list[float]] = {}
+    for uid, pid, status in managed:
+        stats[uid]["projects_managed"] += 1
+        stats[uid]["projects_delivered"] += status == "Completed"
+        if pid in completion:
+            per_user.setdefault(uid, []).append(completion[pid])
+    for uid, values in per_user.items():
+        stats[uid]["managed_projects_completion"] = round(sum(values) / len(values), 2)
+
+    latest = (await db.execute(
+        select(Employee.user_id, ProductivityScore.final_score)
+        .join(ProductivityScore, ProductivityScore.employee_id == Employee.id)
+        .where(Employee.user_id.in_(user_ids), ProductivityScore.deleted_at.is_(None))
+        .order_by(ProductivityScore.week_start.desc())
+    )).all()
+    for uid, score in latest:
+        if stats[uid]["latest_weekly_score"] is None and score is not None:
+            stats[uid]["latest_weekly_score"] = float(score)
+    return stats

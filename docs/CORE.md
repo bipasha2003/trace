@@ -58,10 +58,23 @@ suggests and reports; it never decides that work is done (§7).
    ranking produce candidate lists with reasoning. A human accepts.
 4. **Every AI write is attributed and reversible.** Record which job produced a
    document version or a Gantt version. The AI never changes a task's status.
-5. **AI credentials and model come from `system_settings`** (Admin → Configuration)
+5. **AI credentials and model come from `.env`** (`OPENAI_API_KEY`, `OPENAI_MODEL`,
+   `OPENAI_BASE_URL`) and are fixed there — no Admin can change them (decided
+   2026-09-26; until Phase 8 the code still also checks `system_settings`, which
+   holds no `ai.*` rows). *Originally:* from `system_settings` (Admin → Configuration)
    with `.env` as fallback. Never hardcode a model name at a call site.
 6. **Failures are visible.** A failed evaluation puts the project or task into a
    visible error state naming the reason. It must never leave stale data looking fresh.
+
+### 2.1 How the rules are built *(Phase 5)*
+
+| Piece | Where | Rule |
+|-------|-------|------|
+| Model call | `app/services/ai_service.py` — `AIClient.chat_json()` | OpenAI SDK, JSON mode. Key, model and base URL from `.env` (rule 5; Phase 8 drops the `resolve_setting` detour). No key → the route refuses with 503 *before* enqueuing |
+| Validation | `ai_service.complete(ai, Schema, system, user, context=…)` | The reply is parsed into a Pydantic model from `app/schemas/ai.py`. On a parse or validation error the errors go back to the model and it is asked again — **2 retries**, then `AIOutputInvalid`. Rules that need data (e.g. "every `user_id` is a candidate") are validators reading the validation `context`, so they retry too |
+| Queue | `app/services/jobs.py` — `enqueue(name, *args)` | Routes and services enqueue by task name **after** committing. Tests replace `enqueue` with a recorder (autouse) — no test reaches Redis or a worker. Job bodies are plain `async def run_*(db, …, ai=…, github=…)` functions in `app/services/ai_jobs.py`; `app/tasks.py` only opens a session (its own engine, `NullPool` — every Celery task runs on a fresh event loop) and calls them |
+| Attribution | commit messages, `gantt_charts.generated_by_job` | Every document commit says `(<job name> <job id>)`; every Gantt version stores the job id that wrote it |
+| Failure state | `projects.ai_errors`, `tasks.progress_doc_error` | `ai_errors` is `{job name: {message, at}}` — a job sets its own key on failure and clears it on success. Shown on the project Overview. A task's failed progress document shows on the task page |
 
 ---
 
@@ -85,6 +98,35 @@ one `project_source_file`. Re-runnable on demand.
 | 7 | Rank and **suggest Project Managers** | suggestion payload — not persisted as an assignment |
 | 8 | **Suggest tasks** per group, with candidate assignees | suggestion payload — reviewed before creation |
 | 9 | `projects.status='Active'`, stamp `last_evaluated_at` | |
+
+**As built (Phase 5)** — `run_evaluate_project` in `app/services/ai_jobs.py`:
+- **Who and when.** Only the owning Manager. Refused (409) while the project is
+  already `Evaluating`, has no source file with extracted text, or **already has
+  tasks** — re-running replaces every task group, which is only safe before work is
+  planned into them. After that, the project document and §5 keep the plan current.
+- **State.** The route sets `status='Evaluating'` and commits before enqueuing.
+  Success → `Active`. Failure → back to `Draft` (or `Active` if it was evaluated
+  before), `ai_errors.evaluate_project` names the step that failed, and nothing from
+  the failed run is kept in the database. `GET /projects/{id}/evaluate/status` →
+  `{state: idle | running | failed, error, last_evaluated_at}`; the UI polls it.
+- **Step 1** already happened at upload (`extraction.py`); the job reads
+  `extracted_text` (capped at 60 000 characters in total).
+- **Steps 3–4** commit the same markdown to `docs/project_initial_doc.md` and
+  `docs/project_doc.md` on the default branch. A re-run rewrites both — the old
+  brief stays in the files' git history.
+- **Step 5** validation: 1–20 groups, unique names, 1–365 days each, `depends_on`
+  names an *earlier* group. The names become ids in `task_groups.depends_on`
+  (JSONB list of task-group ids), so every later re-plan keeps them.
+- **Step 6** schedules the groups (§5 scheduling rule) from the project's
+  `start_date` (set to today if empty), sets `end_date` if empty, and writes
+  version 1 through `gantt_service.snapshot(..., "initial")`.
+- **Steps 7–8 run on demand, not inside this job.** A ranking stored at evaluation
+  time is stale by the time a person reads it, and CORE never persists suggestions.
+  So: `POST /projects/{id}/suggest-managers` (owner),
+  `POST /projects/{id}/tasks/suggest-assignees` (PM, with the draft task's title and
+  description) and `POST /projects/{id}/task-groups/{gid}/suggest-tasks` (PM) each
+  enqueue a job and return `{job_id}`; the result is read from
+  `GET /services/task/{job_id}/result`. Nothing is written.
 
 ### Schemas
 
@@ -119,8 +161,25 @@ Steps 7 and 8 — people suggestions:
 | Project Manager (step 7) | Projects delivered, on-time delivery rate, average task completion rate across their projects |
 | Task assignee (step 8, and Stage 2) | Tasks completed, on-time rate, similarity of past task subject matter |
 
-Both read `productivity_scores`, which is refreshed weekly (§8). Attendance is
+The inputs are computed live from `tasks` and `projects` at suggestion time
+(`scoring_service.candidate_stats`) — the same task signals the weekly
+`productivity_scores` stores (§8) — and the latest weekly score is added as
+evidence when one exists. Candidates are capped at 25, pre-sorted by completed
+tasks, and each carries its last 10 completed task titles (subject-matter
+similarity). The model may only return candidate ids (validated). Attendance is
 recorded in the system but is deliberately **not** a ranking input.
+
+Step 8's task suggestions:
+```json
+{
+  "tasks": [
+    { "title": "string", "description": "string",
+      "priority": "Low | Medium | High | Critical", "estimated_hours": 8 }
+  ]
+}
+```
+The Project Manager reviews them in the Create Task dialog; accepting one fills the
+form, it does not create the task.
 
 ---
 
@@ -169,7 +228,11 @@ the token (`PLANNING.md` §3.5).
 
 **Job `generate_task_progress_doc(task_id)`** — the LLM writes the task's
 step-by-step plan and completion checklist, commits it to the repo, and stores the
-URL on `tasks.task_progress_doc`.
+URL on `tasks.task_progress_doc`. *As built:* enqueued after the task (and its
+issue) is committed; the file is `docs/tasks/task-<id>.md`, rendered from the JSON
+below as a markdown checklist; a failure sets `tasks.progress_doc_error`. The task
+page reads it through `GET /tasks/{id}/progress-doc`. It is written once — the
+checklist is not ticked off automatically (the assignee's status is the record).
 
 ```json
 {
@@ -199,6 +262,32 @@ UI can show *why* the chart moved.
 
 Debounce: coalesce triggers for the same project inside a short window, so a bulk
 status update produces one regeneration rather than twenty.
+
+**As built (Phase 5)** — `gantt_service.request_reevaluation(project_id, reason)`
+is the one trigger call:
+- **Triggers.** `project_service.set_status` when a task enters or leaves
+  `Completed`; `mark_overdue_tasks` once per project with newly overdue tasks;
+  `PUT /projects/{id}/documents/doc` when the content actually changed;
+  `POST /projects/{id}/gantt/reevaluate` (Project Manager — the manual button).
+- **Debounce.** Each trigger enqueues `reevaluate_gantt(project_id, reason,
+  requested_at)` with a 30-second countdown (0 for manual). When the job runs it
+  does nothing if a version was generated *after* its `requested_at` — the first
+  job of a burst covers the rest. No lock, no Redis key.
+- **What it does.** Re-schedules the groups and writes a new version. For
+  `project_doc_updated` it first asks the AI (with the new document and every
+  group's progress) for revised durations of unfinished groups and for new groups
+  covering features no group covers (`created_by='AI'`); if that call fails the
+  schedule is still rebuilt without it and `ai_errors.reevaluate_gantt` says so.
+- **Scheduling rule** (`gantt_service.schedule`), in `sequence` order: a group
+  starts at its `planned_start_date` (else the project start), moved to the day
+  after its latest dependency ends if that is later; it lasts
+  `estimated_duration_days` (else its current planned span, else 7). A `Completed`
+  group ends on its `actual_end_date`; an unfinished group whose end has passed is
+  stretched to today, so the slip pushes its dependants. The result is written back
+  to `planned_start_date` / `planned_end_date` — the *plan* is the current
+  forecast; the Gantt versions are its history.
+- `recompute_group` stamps `actual_start_date` when a group first leaves `Pending`
+  and `actual_end_date` when it becomes `Completed` (cleared if it reopens).
 
 ### 5.1 `chart_data` — the one shape every Gantt version has *(defined 2026-09-26, Phase 4)*
 
@@ -246,11 +335,10 @@ task groups and tasks into this shape without the AI: a group's bar is its
 `planned_start_date` → `planned_end_date`; a group missing either is laid after the
 previous bar (from the project's `start_date`, else today) for its
 `estimated_duration_days`, else 7 days. The project's `end_date`, if set, is a
-milestone. It carries no dependencies unless it is given them: `task_groups` has
-no dependency column, so Stage 1 step 6 passes the §3 step 5 `depends_on` pairs in
-(Phase 5 decides whether they also need a column, so `reevaluate_gantt` can reuse
-them). The AI's contribution is those pairs plus the dates and durations it writes
-into the task groups.
+milestone. Its dependencies are the groups' `task_groups.depends_on` ids (added in
+Phase 5), limited to groups in the chart. The AI's contribution is those
+dependencies plus the durations it writes into the task groups; the dates come from
+the §5 scheduling rule.
 
 ---
 
@@ -262,6 +350,14 @@ into the task groups.
 `tasks.task_progress_doc` in it plus current task statuses, then have the LLM
 rewrite `projects.project_progress_doc` and refresh `projects.project_report_doc`.
 Both are committed to the repo; the DB stores their URLs.
+
+*As built (Phase 5):* Beat runs it Mondays 07:00 over every `Active` project, one
+`update_project_progress_doc(project_id)` job each. The owning Manager or a Project
+Manager can run it for one project now: `POST /projects/{id}/progress-report`. Files
+`docs/project_progress_doc.md` and `docs/project_report_doc.md`; schema
+`{"progress_markdown": "…", "report_markdown": "…"}`. Each task's progress document
+is read back from GitHub (a missing one is skipped). The Progress Report tab reads
+both through `GET /projects/{id}/documents/{progress|report}`.
 
 ---
 
@@ -318,6 +414,16 @@ assignee's way of saying "done, please look" — and carries no automation.
 Retire from the existing schedule: `compute_task_health_and_escalate` (hourly) and
 `detect_overallocation` (nightly) — both deferred, see [`PLANNING.md`](PLANNING.md).
 
+*As built (Phase 5):* `mark_overdue_tasks` replaced the pre-re-spec
+`mark_delayed_tasks` (which wrote a `Delayed` status that no longer exists). It
+flips open past-due tasks (`Pending`, `In Progress`, `In Review`, `Blocked`) to
+`Overdue` and requests a Gantt re-evaluation per affected project; its
+notifications arrive with Phase 7. `compute_all_weekly_scores` is the weekly
+scoring job, re-based on task signals: `task_score` = completed ÷ assigned tasks due
+that week, `deadline_score` = completed on or before the due date ÷ completed,
+`final_score` = the mean of the two. `att_score` and `active_time_score` are left
+empty. `task_due_reminders` is Phase 7.
+
 ---
 
 ## 9. Notifications emitted by this system
@@ -348,3 +454,10 @@ Email goes through the existing Mailpit/SMTP Celery task. In-app notifications a
 
 All `*_doc` columns hold **GitHub repository file URLs**, never markdown bodies.
 The file's git history *is* its version history — do not build a versions table.
+
+Each document lives at a fixed path on the default branch (`docs/<column>.md`,
+tasks at `docs/tasks/task-<id>.md`); TRACE reads it back from that path through
+`github_service.read_file`, never by parsing the stored URL.
+`GET /projects/{id}/documents/{initial|doc|progress|report}` returns `{url, content}`
+to anyone who can see the project; `PUT /projects/{id}/documents/doc` (Project
+Manager) commits a new `project_doc` and, when it changed, triggers §5.

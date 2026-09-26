@@ -1,6 +1,6 @@
 /**
  * TRACE — Employee: task detail
- * Description, linked GitHub issue, progress doc, status. The assignee updates the
+ * Description, linked GitHub issue, the rendered progress doc (CORE.md §4), status. The assignee updates the
  * status themselves, completion included (CORE.md §7); the buttons come from the
  * server's `allowed_statuses`, never re-derived here. PROJECT.md §20.
  */
@@ -10,7 +10,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, CheckCircle2, ExternalLink, FileText, GitCommitHorizontal, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import {
@@ -20,6 +20,7 @@ import {
 import { tasksApi } from '@/api/tasks'
 import { projectsApi } from '@/api/projects'
 import { TaskStatusBadge } from '@/components/project/status'
+import Markdown from '@/components/Markdown'
 import { apiError, formatDate, isOverdue } from '@/lib/project'
 
 export default function TaskDetailPage() {
@@ -29,11 +30,13 @@ export default function TaskDetailPage() {
   const [candidates, setCandidates] = useState([])
   const [busy, setBusy] = useState(null)
   const [confirmComplete, setConfirmComplete] = useState(false)
+  const [progressDoc, setProgressDoc] = useState(null)
 
   const load = useCallback(async () => {
     try {
       const { data } = await tasksApi.get(taskId)
       setTask(data)
+      if (data.task_progress_doc) tasksApi.progressDoc(data.id).then((r) => setProgressDoc(r.data)).catch(() => {})
       if (data.can_edit) setCandidates((await projectsApi.candidates(data.project_id)).data)
     } catch (err) {
       toast.error(apiError(err, 'Could not load the task'))
@@ -120,15 +123,26 @@ export default function TaskDetailPage() {
           </Card>
 
           <Card>
-            <CardHeader><CardTitle className="flex items-center gap-2 text-base"><FileText className="size-4" /> Progress document</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base"><FileText className="size-4" /> Progress document</CardTitle>
+              {task.task_progress_doc && (
+                <CardAction>
+                  <Button size="sm" variant="ghost" nativeButton={false}
+                    render={<a href={task.task_progress_doc} target="_blank" rel="noopener noreferrer" />}>
+                    On GitHub <ExternalLink />
+                  </Button>
+                </CardAction>
+              )}
+            </CardHeader>
             <CardContent className="text-sm">
-              {task.task_progress_doc ? (
-                <a href={task.task_progress_doc} target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-primary hover:underline">
-                  Steps and checklist <ExternalLink className="size-3" />
-                </a>
+              {progressDoc?.content ? (
+                <Markdown>{progressDoc.content}</Markdown>
+              ) : task.progress_doc_error ? (
+                <p className="text-destructive">The AI could not write the plan: {task.progress_doc_error}</p>
               ) : (
-                <p className="text-muted-foreground">Not generated yet — the AI writes the step-by-step plan for each task.</p>
+                <p className="text-muted-foreground">
+                  {task.task_progress_doc ? 'Loading…' : 'Being written — the AI drafts the steps and checklist when a task is created. Refresh in a minute.'}
+                </p>
               )}
             </CardContent>
           </Card>

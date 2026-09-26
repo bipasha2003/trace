@@ -1,7 +1,7 @@
 /**
  * TRACE — Project overview tab (Manager + Employee)
- * Status, dates, repository, progress, the four documents, source files.
- * Only the owning Manager uploads or removes source files.
+ * Status, dates, repository, progress, AI evaluation, the four documents, source files.
+ * Only the owning Manager uploads or removes source files and evaluates the project.
  */
 
 import { useRef, useState } from 'react'
@@ -12,6 +12,7 @@ import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle }
 import { Progress } from '@/components/ui/progress'
 import { projectsApi } from '@/api/projects'
 import { ProjectStatusBadge } from './status'
+import EvaluationCard from './EvaluationCard'
 import { apiError, formatDate } from '@/lib/project'
 
 const DOCUMENTS = [
@@ -54,6 +55,7 @@ export default function ProjectOverview({ project, isOwner, onChange }) {
 
   return (
     <div className="grid gap-4 lg:grid-cols-3">
+      <EvaluationCard project={project} isOwner={isOwner} onChange={onChange} />
       <Card className="lg:col-span-2">
         <CardHeader>
           <CardTitle className="text-base">Progress</CardTitle>

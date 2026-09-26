@@ -19,6 +19,7 @@ from app.exceptions import NotFoundException, TraceException
 from app.models.project import Notification, Project, ProjectAssignment, ProjectSourceFile, TaskGroup
 from app.models.task import Task
 from app.models.user import User, UserRole
+from app.services import jobs
 from app.services.github_service import GitHubClient, GitHubError, repo_slug
 
 OPEN_STATUSES = ("Pending", "In Progress", "In Review", "Blocked", "Overdue")
@@ -163,6 +164,7 @@ async def project_detail(db: AsyncSession, access: ProjectAccess) -> dict:
         **summary,
         "github_default_branch": project.github_default_branch,
         "last_evaluated_at": project.last_evaluated_at,
+        "ai_errors": project.ai_errors or {},
         "documents": {k: getattr(project, k) for k in (
             "project_initial_doc", "project_doc", "project_progress_doc", "project_report_doc")},
         "source_files": [source_file_dict(f) for f in sorted(
@@ -171,6 +173,16 @@ async def project_detail(db: AsyncSession, access: ProjectAccess) -> dict:
 
 
 # ── People ───────────────────────────────────────────────────────
+
+async def active_employees(db: AsyncSession) -> list[User]:
+    """Everyone who may be given a project role or a task, by name."""
+    from app.models.user import Role
+    return list((await db.execute(
+        select(User).join(UserRole, UserRole.user_id == User.id).join(Role, Role.id == UserRole.role_id)
+        .where(Role.role_name == "Employee", User.deleted_at.is_(None), User.status == "Active")
+        .order_by(User.name)
+    )).scalars().unique().all())
+
 
 async def active_employee(db: AsyncSession, user_id: int) -> User:
     """A user who may take a project role: an active platform Employee."""
@@ -281,6 +293,7 @@ def task_dict(task: Task, access: ProjectAccess | None = None) -> dict:
         "estimated_hours": float(task.estimated_hours) if task.estimated_hours is not None else None,
         "github_issue_id": task.github_issue_id, "github_issue_url": task.github_issue_url,
         "task_progress_doc": task.task_progress_doc,
+        "progress_doc_error": task.progress_doc_error,
         "assigned_to": person(task.assigned_to_user), "assigned_by": person(task.assigned_by_user),
         "completed_by": task.completed_by, "completed_at": task.completed_at,
         "health_score": task.health_score, "health_reason": task.health_reason,
@@ -320,6 +333,14 @@ async def recompute_group(db: AsyncSession, group_id: int | None) -> None:
         group.status = "Blocked"
     else:
         group.status = "Pending"
+    # What actually happened, for the Gantt re-plan (CORE.md §5)
+    today = date.today()
+    if group.status != "Pending" and group.actual_start_date is None:
+        group.actual_start_date = today
+    if group.status == "Completed":
+        group.actual_end_date = group.actual_end_date or today
+    else:
+        group.actual_end_date = None
 
 
 def _pending_invitation(assignee: User, project: Project) -> str:
@@ -379,6 +400,7 @@ async def create_task(db: AsyncSession, access: ProjectAccess, data, github: Git
         notify_assignment(db, task, project, assignee.id)
     await recompute_group(db, group.id)
     await db.commit()
+    jobs.enqueue("generate_task_progress_doc", task.id)  # CORE.md §4 step 4 — after the commit
     return await load_task(db, task.id), warnings
 
 
@@ -427,6 +449,7 @@ async def assign_task(db: AsyncSession, access: ProjectAccess, task: Task, user_
 async def set_status(db: AsyncSession, access: ProjectAccess, task: Task, new_status: str,
                      github: GitHubClient | None) -> Task:
     access.may_set_status(task, new_status)  # CORE.md §7 — raises 403
+    completion_changed = (task.status == "Completed") != (new_status == "Completed")
     was_closed = task.status in ("Completed", "Cancelled")
     closes = new_status in ("Completed", "Cancelled")
     number = _issue_number(task)
@@ -444,6 +467,9 @@ async def set_status(db: AsyncSession, access: ProjectAccess, task: Task, new_st
         task.completed_at = None
     await recompute_group(db, task.task_group_id)
     await db.commit()
+    if completion_changed:
+        from app.services.gantt_service import request_reevaluation
+        request_reevaluation(access.project.id, "task_status_change")  # CORE.md §5
     return await load_task(db, task.id)
 
 
@@ -455,3 +481,22 @@ async def delete_task(db: AsyncSession, access: ProjectAccess, task: Task, githu
     task.deleted_at = datetime.now(timezone.utc)
     await recompute_group(db, task.task_group_id)
     await db.commit()
+
+
+async def mark_overdue_tasks(db: AsyncSession, today: date) -> dict:
+    """The nightly sweep (CORE.md §8): open past-due tasks → Overdue, one Gantt re-plan per project."""
+    from sqlalchemy import update
+    from app.services.gantt_service import request_reevaluation
+
+    rows = (await db.execute(
+        update(Task)
+        .where(Task.due_date < today, Task.status.in_(("Pending", "In Progress", "In Review", "Blocked")),
+               Task.deleted_at.is_(None), Task.project_id.is_not(None))
+        .values(status="Overdue")
+        .returning(Task.id, Task.project_id)
+    )).all()
+    await db.commit()
+    projects = sorted({pid for _, pid in rows})
+    for project_id in projects:
+        request_reevaluation(project_id, "task_status_change")
+    return {"status": "success", "date": today.isoformat(), "tasks": [tid for tid, _ in rows], "projects": projects}

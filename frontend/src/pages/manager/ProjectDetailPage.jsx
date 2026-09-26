@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { FileBarChart, RefreshCw } from 'lucide-react'
+import { RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -15,7 +15,7 @@ import { projectsApi } from '@/api/projects'
 import ProjectOverview from '@/components/project/ProjectOverview'
 import TaskBoard from '@/components/project/TaskBoard'
 import TeamPanel from '@/components/project/TeamPanel'
-import NotYetAvailable from '@/components/project/NotYetAvailable'
+import ProgressReport from '@/components/project/ProgressReport'
 import ProjectTreeGraph from '@/components/ProjectTreeGraph'
 import GanttChart from '@/components/GanttChart'
 import { ProjectStatusBadge } from '@/components/project/status'
@@ -67,11 +67,7 @@ export default function ManagerProjectDetailPage() {
         <TabsContent value="tasks"><TaskBoard projectId={project.id} /></TabsContent>
         <TabsContent value="tree"><ProjectTreeGraph projectId={project.id} /></TabsContent>
         <TabsContent value="gantt"><GanttChart projectId={project.id} /></TabsContent>
-        <TabsContent value="report">
-          <NotYetAvailable icon={FileBarChart} title="Progress report">
-            The progress document and project report are written by the AI once the project is evaluated.
-          </NotYetAvailable>
-        </TabsContent>
+        <TabsContent value="report"><ProgressReport projectId={project.id} canRefresh /></TabsContent>
         <TabsContent value="team"><TeamPanel projectId={project.id} isOwner onChange={load} /></TabsContent>
       </Tabs>
     </div>

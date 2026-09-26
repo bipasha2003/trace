@@ -101,6 +101,7 @@ class ProjectDetail(ProjectSummary):
     github_default_branch: str
     documents: ProjectDocuments
     last_evaluated_at: datetime | None
+    ai_errors: dict[str, dict] = {}  # {job name: {message, at}} — CORE.md §2.1
     source_files: list[SourceFileResponse]
 
 
@@ -213,6 +214,7 @@ class TaskResponse(BaseModel):
     github_issue_id: str | None
     github_issue_url: str | None
     task_progress_doc: str | None
+    progress_doc_error: str | None = None
     assigned_to: PersonBrief | None
     assigned_by: PersonBrief | None
     completed_by: str | None
@@ -239,3 +241,38 @@ class ActivityItem(BaseModel):
     status: str
     assigned_to: PersonBrief | None
     updated_at: datetime | None
+
+
+# ── AI pipeline (Phase 5, CORE.md §3–6) ──────────────────────────
+
+DocumentKind = Literal["initial", "doc", "progress", "report"]
+
+
+class JobQueued(BaseModel):
+    job_id: str
+
+
+class EvaluationStatus(BaseModel):
+    state: Literal["idle", "running", "failed"]
+    error: str | None
+    project_status: str
+    last_evaluated_at: datetime | None
+
+
+class DocumentResponse(BaseModel):
+    kind: str
+    url: str | None
+    content: str | None  # None until the document is generated
+
+
+class DocumentUpdate(BaseModel):
+    content: str = Field(..., min_length=1, max_length=200_000)
+
+
+class DocumentSaved(DocumentResponse):
+    changed: bool  # False → identical content, nothing committed, no re-evaluation
+
+
+class AssigneeSuggestionRequest(BaseModel):
+    title: str = Field(..., min_length=2, max_length=255)
+    description: str | None = None

@@ -1,12 +1,14 @@
 /**
  * TRACE — Task board, grouped by task group (the Gantt modules)
  * Project Managers create groups and tasks here; creating a task creates its
- * GitHub issue. Everyone else sees the same board read-only. PROJECT.md §20.
+ * GitHub issue. The create dialog can ask the AI for task ideas and ranked
+ * assignees (CORE.md §3 step 8, §4) — it only fills the form. Everyone else sees
+ * the same board read-only. PROJECT.md §20.
  */
 
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertTriangle, ExternalLink, FolderPlus, Loader2, Plus, Trash2 } from 'lucide-react'
+import { AlertTriangle, ExternalLink, FolderPlus, Loader2, Plus, Sparkles, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -21,7 +23,27 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 import { projectsApi } from '@/api/projects'
 import { TaskStatusBadge } from './status'
+import PeopleSuggestions from './PeopleSuggestions'
 import { apiError, formatDate, isOverdue } from '@/lib/project'
+import { waitForJob } from '@/lib/jobs'
+
+/** Run an AI job from a button: { run, busy } — run(start) resolves with the job result, or null */
+function useAiJob() {
+  const [busy, setBusy] = useState(false)
+  const run = async (start) => {
+    setBusy(true)
+    try {
+      const { data } = await start()
+      return await waitForJob(data.job_id)
+    } catch (err) {
+      toast.error(apiError(err, err.message || 'The AI request failed'))
+      return null
+    } finally {
+      setBusy(false)
+    }
+  }
+  return { run, busy }
+}
 
 function GroupDialog({ projectId, open, onOpenChange, onCreated }) {
   const [form, setForm] = useState({ name: '', description: '', estimated_duration_days: '' })
@@ -85,15 +107,35 @@ function TaskDialog({ projectId, groups, defaultGroupId, open, onOpenChange, onC
   const [form, setForm] = useState(empty)
   const [candidates, setCandidates] = useState([])
   const [busy, setBusy] = useState(false)
+  const [ideas, setIdeas] = useState(null)
+  const [people, setPeople] = useState(null)
+  const ideaJob = useAiJob()
+  const peopleJob = useAiJob()
 
   useEffect(() => {
     if (!open) return
     setForm({ ...empty, task_group_id: defaultGroupId ? String(defaultGroupId) : '' })
+    setIdeas(null)
+    setPeople(null)
     projectsApi.candidates(projectId).then((r) => setCandidates(r.data)).catch(() => setCandidates([]))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, projectId, defaultGroupId])
 
   const assignee = candidates.find((c) => String(c.id) === form.assigned_to_user_id)
+
+  const suggestTasks = async () => {
+    const result = await ideaJob.run(() => projectsApi.suggestTasks(projectId, form.task_group_id))
+    if (result) setIdeas(result.tasks)
+  }
+  const suggestPeople = async () => {
+    const result = await peopleJob.run(() =>
+      projectsApi.suggestAssignees(projectId, form.title.trim(), form.description.trim() || null))
+    if (result) setPeople(result.suggestions)
+  }
+  const applyIdea = (idea) => {
+    setForm((f) => ({ ...f, title: idea.title, description: idea.description || '', priority: idea.priority }))
+    setPeople(null)
+  }
 
   const submit = async () => {
     setBusy(true)
@@ -119,7 +161,7 @@ function TaskDialog({ projectId, groups, defaultGroupId, open, onOpenChange, onC
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
         <DialogHeader>
           <DialogTitle>New task</DialogTitle>
           <DialogDescription>Creating the task opens a GitHub issue in the project repository.</DialogDescription>
@@ -163,6 +205,36 @@ function TaskDialog({ projectId, groups, defaultGroupId, open, onOpenChange, onC
               </NativeSelect>
             </div>
           </div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" size="sm" variant="outline" onClick={suggestTasks}
+              disabled={!form.task_group_id || ideaJob.busy}>
+              {ideaJob.busy ? <Loader2 className="animate-spin" /> : <Sparkles />} Suggest tasks for this group
+            </Button>
+            <Button type="button" size="sm" variant="outline" onClick={suggestPeople}
+              disabled={form.title.trim().length < 2 || peopleJob.busy}>
+              {peopleJob.busy ? <Loader2 className="animate-spin" /> : <Sparkles />} Suggest assignees
+            </Button>
+          </div>
+          {ideas && (
+            <ul className="space-y-1.5">
+              {ideas.map((idea) => (
+                <li key={idea.title} className="flex items-start gap-2 rounded-lg border p-2 text-sm">
+                  <span className="min-w-0 flex-1">
+                    <span className="font-medium">{idea.title}</span>
+                    <span className="block text-xs text-muted-foreground">
+                      {idea.priority}{idea.estimated_hours ? ` · ~${idea.estimated_hours} h` : ''}
+                      {idea.description ? ` · ${idea.description}` : ''}
+                    </span>
+                  </span>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => applyIdea(idea)}>Use</Button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {people && (
+            <PeopleSuggestions suggestions={people} actionLabel="Pick"
+              onPick={(u) => setForm((f) => ({ ...f, assigned_to_user_id: String(u.id) }))} />
+          )}
           {assignee && !assignee.github_username && (
             <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
               <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />

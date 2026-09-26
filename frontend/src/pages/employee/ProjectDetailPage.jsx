@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { FileText, RefreshCw } from 'lucide-react'
+import { RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -15,7 +15,7 @@ import { projectsApi } from '@/api/projects'
 import ProjectOverview from '@/components/project/ProjectOverview'
 import TaskBoard from '@/components/project/TaskBoard'
 import TeamPanel from '@/components/project/TeamPanel'
-import NotYetAvailable from '@/components/project/NotYetAvailable'
+import ProjectDocEditor from '@/components/project/ProjectDocEditor'
 import ProjectTreeGraph from '@/components/ProjectTreeGraph'
 import GanttChart from '@/components/GanttChart'
 import { ProjectStatusBadge, RoleBadge } from '@/components/project/status'
@@ -45,7 +45,7 @@ export default function EmployeeProjectDetailPage() {
 
   const isPM = project.my_role === 'Project Manager'
   const tree = <ProjectTreeGraph projectId={project.id} taskPath={taskPath} />
-  const gantt = <GanttChart projectId={project.id} />
+  const gantt = <GanttChart projectId={project.id} canReevaluate={isPM} />
 
   return (
     <div id="employee-project-page" className="space-y-6 max-w-[1400px]">
@@ -75,12 +75,7 @@ export default function EmployeeProjectDetailPage() {
           <TabsContent value="tasks"><TaskBoard projectId={project.id} canManage taskPath={taskPath} onChange={load} /></TabsContent>
           <TabsContent value="tree">{tree}</TabsContent>
           <TabsContent value="gantt">{gantt}</TabsContent>
-          <TabsContent value="doc">
-            <NotYetAvailable icon={FileText} title="Project document">
-              The AI writes the project document when the project is evaluated. You will edit it here, and
-              saving it will re-plan the Gantt chart.
-            </NotYetAvailable>
-          </TabsContent>
+          <TabsContent value="doc"><ProjectDocEditor projectId={project.id} /></TabsContent>
           <TabsContent value="team"><TeamPanel projectId={project.id} isOwner={false} /></TabsContent>
         </Tabs>
       ) : (

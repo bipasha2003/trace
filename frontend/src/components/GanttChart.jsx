@@ -3,11 +3,14 @@
  * Renders one stored gantt_charts version — nothing but its chart_data. One bar per
  * task group, expandable to its tasks (a marker on each due date), a completion
  * overlay, dependency arrows, milestones and a today line. Read-only: the chart is
- * regenerated, never dragged. Shows the version and why it was generated.
+ * regenerated, never dragged. Shows the version and why it was generated. The
+ * Project Manager can ask for a re-plan now (CORE.md §5, reason 'manual').
  */
 
 import { useCallback, useEffect, useId, useMemo, useState } from 'react'
-import { ChartGantt, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, RefreshCw } from 'lucide-react'
+import {
+  ChartGantt, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Loader2, RefreshCw, Sparkles,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -17,6 +20,7 @@ import NotYetAvailable from '@/components/project/NotYetAvailable'
 import { StatusLegend } from '@/components/project/status'
 import { projectsApi } from '@/api/projects'
 import { apiError, formatDate, statusTone } from '@/lib/project'
+import { waitForJob } from '@/lib/jobs'
 
 const LABEL_W = 220
 const BAR_ROW = 44
@@ -221,10 +225,12 @@ function Chart({ data, generatedAt, expanded, toggle }) {
   )
 }
 
-export default function GanttChart({ projectId }) {
+/** canReevaluate — the caller is the Project Manager, who may re-plan on demand */
+export default function GanttChart({ projectId, canReevaluate = false }) {
   const [chart, setChart] = useState(undefined)   // undefined = loading, null = none yet
   const [versions, setVersions] = useState([])
   const [expanded, setExpanded] = useState(new Set())
+  const [replanning, setReplanning] = useState(false)
 
   const load = useCallback(async (version) => {
     try {
@@ -248,12 +254,36 @@ export default function GanttChart({ projectId }) {
     return next
   })
 
+  const replan = async () => {
+    setReplanning(true)
+    try {
+      const { data } = await projectsApi.reevaluateGantt(projectId)
+      const result = await waitForJob(data.job_id)
+      if (result.status === 'success') toast.success(`Gantt re-planned — version ${result.version}`)
+      else toast.info(result.reason || 'Nothing to re-plan')
+      load()
+    } catch (err) {
+      toast.error(apiError(err, err.message || 'Could not re-plan the Gantt chart'))
+    } finally {
+      setReplanning(false)
+    }
+  }
+  const replanButton = canReevaluate && (
+    <Button variant="outline" size="sm" onClick={replan} disabled={replanning}>
+      {replanning ? <Loader2 className="animate-spin" /> : <Sparkles />} Re-plan now
+    </Button>
+  )
+
   if (chart === undefined) return <Skeleton className="h-80" />
   if (chart === null) {
     return (
-      <NotYetAvailable icon={ChartGantt} title="No Gantt chart yet">
-        The chart is generated when the project is evaluated, then regenerated as work moves.
-      </NotYetAvailable>
+      <div className="space-y-3">
+        <NotYetAvailable icon={ChartGantt} title="No Gantt chart yet">
+          The chart is generated when the project is evaluated, then regenerated as work moves.
+          {canReevaluate && ' If you have planned task groups by hand, re-plan to draw them now.'}
+        </NotYetAvailable>
+        {replanButton && <div className="flex justify-center">{replanButton}</div>}
+      </div>
     )
   }
 
@@ -285,6 +315,7 @@ export default function GanttChart({ projectId }) {
             onClick={() => setExpanded(allOpen ? new Set() : new Set(data.bars.map((b) => b.task_group_id)))}>
             {allOpen ? <ChevronsDownUp /> : <ChevronsUpDown />} {allOpen ? 'Collapse all' : 'Expand all'}
           </Button>
+          {replanButton}
           <Button variant="outline" size="icon-sm" aria-label="Refresh" onClick={() => load()}><RefreshCw /></Button>
         </div>
       </div>

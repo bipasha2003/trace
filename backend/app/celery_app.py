@@ -30,10 +30,15 @@ celery_app.conf.update(
 
 # ── Periodic Task Schedule ───────────────────────────────────────
 celery_app.conf.beat_schedule = {
-    # Mark overdue tasks as "Delayed" — runs every night at 11 PM
-    "mark-delayed-tasks-nightly": {
-        "task": "app.tasks.mark_delayed_tasks",
+    # Open past-due tasks → Overdue, then re-plan their Gantt charts — every night at 11 PM
+    "mark-overdue-tasks-nightly": {
+        "task": "app.tasks.mark_overdue_tasks",
         "schedule": crontab(hour=23, minute=0),
+    },
+    # AI progress roll-up for every Active project (CORE.md §6) — Mondays at 7 AM
+    "project-progress-docs-weekly": {
+        "task": "app.tasks.update_project_progress_docs",
+        "schedule": crontab(day_of_week="monday", hour=7, minute=0),
     },
     # Compute weekly scores — runs every Sunday at 11:30 PM
     "compute-weekly-scores": {

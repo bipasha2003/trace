@@ -28,6 +28,7 @@ os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 # Whatever .env says: a known organization, no real token, and a throwaway encryption key
 os.environ["GITHUB_OWNER"] = "acme"
 os.environ["GITHUB_TOKEN"] = ""
+os.environ["OPENAI_API_KEY"] = ""  # no real model, ever — `fake_ai` configures a fake one
 os.environ["SETTINGS_ENCRYPTION_KEY"] = "kZ3o0f4Vw3d5e1Xyq2l9m8n7b6v5c4x3z2a1s0d9f8g="
 get_settings.cache_clear()
 
@@ -273,11 +274,18 @@ class FakeGitHub:
             path = "/".join(parts[4:])
             if request.method == "GET":
                 f = self.files.get((repo, path))
-                return httpx.Response(200, json={"sha": f["sha"]}) if f else httpx.Response(404, json={})
+                return (httpx.Response(200, json={"sha": f["sha"], "content": f["content"], "encoding": "base64"})
+                        if f else httpx.Response(404, json={}))
             self.files[(repo, path)] = {**body, "sha": f"sha{len(self.files) + 1}"}
             return httpx.Response(201, json={"content": {
                 "html_url": f"https://github.com/{repo}/blob/{body['branch']}/{path}"}})
         return httpx.Response(404, json={"message": "not faked"})
+
+    def text(self, repo: str, path: str) -> str | None:
+        """A committed file's text, as TRACE wrote it."""
+        import base64
+        f = self.files.get((repo, path))
+        return base64.b64decode(f["content"]).decode() if f else None
 
     def client(self) -> GitHubClient:
         return GitHubClient("test-token", transport=httpx.MockTransport(self._handle),
@@ -333,3 +341,62 @@ async def make_user(db: AsyncSession, role: str, username: str, github_username:
         (await db.get(User, result.user.id)).github_username = github_username
         await db.flush()
     return result.user.id, {"Authorization": f"Bearer {result.tokens.access_token}"}
+
+
+# ── Background jobs and the model: never real in tests ───────────
+
+class JobRecorder:
+    """Stands in for `jobs.enqueue`: records (name, args, countdown) instead of reaching Redis."""
+
+    def __init__(self):
+        self.sent: list[tuple[str, tuple, int | None]] = []
+
+    def __call__(self, name, *args, countdown=None):
+        self.sent.append((name, args, countdown))
+        return f"job-{len(self.sent)}"
+
+    def named(self, name: str) -> list[tuple]:
+        return [args for n, args, _ in self.sent if n == name]
+
+
+@pytest.fixture(autouse=True)
+def jobs_sent(monkeypatch) -> JobRecorder:
+    from app.services import jobs
+    recorder = JobRecorder()
+    monkeypatch.setattr(jobs, "enqueue", recorder)
+    return recorder
+
+
+class FakeAI:
+    """The model, scripted per output schema: `fake_ai.reply("TaskGroupPlanOut", {...})`.
+
+    A reply may be a dict (sent as JSON), a raw string (to test bad output), or a list of
+    either — consumed one per call, the last one repeating. Every call is recorded.
+    """
+
+    def __init__(self):
+        self.replies: dict[str, list] = {}
+        self.calls: list[tuple[str, list[dict]]] = []
+
+    def reply(self, schema: str, *replies) -> None:
+        self.replies[schema] = list(replies)
+
+    async def chat_json(self, messages: list[dict], schema_name: str) -> str:
+        self.calls.append((schema_name, [dict(m) for m in messages]))
+        queue = self.replies.get(schema_name)
+        if not queue:
+            raise AssertionError(f"FakeAI has no reply scripted for {schema_name}")
+        reply = queue.pop(0) if len(queue) > 1 else queue[0]
+        return reply if isinstance(reply, str) else _json.dumps(reply)
+
+    def called(self, schema: str) -> int:
+        return sum(1 for name, _ in self.calls if name == schema)
+
+
+@pytest_asyncio.fixture
+async def fake_ai(db_session: AsyncSession) -> FakeAI:
+    """A fake model, and an ai.api_key in Configuration so routes see AI as configured."""
+    from app.services.system_settings import store_setting
+    await store_setting(db_session, "ai", "api_key", "sk-test")
+    await db_session.commit()
+    return FakeAI()

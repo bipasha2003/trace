@@ -111,6 +111,18 @@ consolidated into six: `AGENTS.md` and `README.md` at the root, and `PROJECT.md`
 | 2026-09-26 | `chart_data` schema defined in Phase 4 (`CORE.md` §5.1), plus a deterministic builder | The phase text said only "driven by `chart_data`" and Phase 5 will generate it. Defining the shape now, as a Pydantic model every writer must pass, stops the renderer and the AI from drifting apart. The builder does the arithmetic (dates, roll-up) so the AI only has to supply dates, durations and dependencies |
 | 2026-09-26 | The tree is a **live** read; the Gantt is a stored **snapshot** | Both could be live. The spec makes the Gantt versioned with a reason per version, which only means something if a version shows what was true when it was made. The tree has no such history, so it reads current data |
 | 2026-09-26 | `GET /projects/{id}/gantt` returns `null`, not 404, before the first version | A project without a chart yet is the normal state until it is evaluated; a 404 would be indistinguishable from a missing project. `?version=N` for a version that does not exist is still a 404 |
+| 2026-09-26 | **LLM configuration fixed in `.env`** — no AI section in Configuration | User decision. Phase 5 built resolution through `system_settings` (DB, then `.env`) so an Admin could switch models at runtime. Dropped: one fixed configuration, changed only by whoever controls the server. Phase 8 removes the `ai.*` keys from resolution |
+| 2026-09-26 | Reports are a **dashboard download with a date range**, not a page or a schedule | User decision (Q7). Replaces the placeholder `/admin/reports` and the weekly report email |
+| 2026-09-26 | Phase 9 responsive pass **dropped**; pagination, global search, AI empty/error states and a revision sweep kept | User decision |
+| 2026-09-26 | **People and task suggestions run on demand**, not inside `evaluate_project` (CORE §3 steps 7–8) | CORE listed them as evaluation steps. Not taken that way: at evaluation time there is no PM yet to read task suggestions, CORE forbids persisting suggestions, and a ranking computed then is stale by the time anyone looks. So each is its own job whose Celery result is the answer, requested from the Team tab and the Create Task dialog |
+| 2026-09-26 | `task_groups.depends_on` **column** (JSONB list of ids) | The alternative was keeping dependencies only inside each Gantt version's `chart_data`. Not taken: every re-plan needs them as input, and reading them back out of the previous version would make the render payload a source of truth |
+| 2026-09-26 | Evaluate Project is **refused once the project has tasks** | Re-running replaces every task group; with tasks in them that would orphan work or need a merge. Before tasks exist, re-running is the natural retry. After, the living `project_doc` + `reevaluate_gantt` is the way the plan changes — which is what CORE already intends |
+| 2026-09-26 | Gantt **re-plans are deterministic**; the AI only joins on `project_doc_updated` | CORE calls it "AI re-evaluation" for every trigger. A task completing or going overdue changes dates, not scope — arithmetic (`gantt_service.schedule`) answers it exactly and costs nothing. Scope only changes when the document does, so only then is the model asked (durations of unfinished groups, new groups). If that call fails the chart is still re-planned and `ai_errors` says so |
+| 2026-09-26 | Debounce by **`requested_at` vs the latest version's `generated_at`**, with a 30 s countdown | A Redis lock or "pending" key was the usual choice. Not taken: the check needs nothing beyond the table the job writes anyway, survives a worker restart, and is testable without Redis. The first job of a burst covers the rest |
+| 2026-09-26 | AI failures recorded in **`projects.ai_errors` (JSONB per job)** and `tasks.progress_doc_error` | A single `evaluation_error` text was the minimal choice. Not taken: three jobs write to a project, and one's success must not clear another's failure |
+| 2026-09-26 | Routes **enqueue by name** (`jobs.enqueue`) and tests replace it | `.delay()` from a route was the existing pattern (`llm_chat_task`). Not taken: tests would push real messages to the local Redis, where a running dev worker would execute them against the dev database. By-name also avoids importing `app.tasks` into routers |
+| 2026-09-26 | Ranking inputs **computed live** (`candidate_stats`), not read from `productivity_scores` | CORE said both suggestions read the weekly table. It is empty until Beat has run for a week and misses projects managed, so rankings would be blank on a new installation. The weekly score is still passed in as evidence when it exists |
+| 2026-09-26 | Documents rendered with **`react-markdown` + `remark-gfm`** | Showing only a GitHub link was the dependency-free option. Not taken: the spec asks for the rendered progress doc with its checklist on the task page and a rendered Progress Report tab. GFM is needed for task-list checkboxes; styling is Tailwind tokens via component overrides, no typography plugin |
 
 ---
 
@@ -187,6 +199,8 @@ not re-proposed without new information.
 | Each Manager supplies an existing repository | TRACE creates the repo under the company owner | Repos TRACE did not create may lack its access, collide in naming, or belong to someone who leaves. Q6 |
 | Per-user GitHub sign-in (OAuth) | One company token, collaborators invited | Every user would need to authorise TRACE, and actions would run as whoever happened to trigger them — no single place to revoke access |
 | A classic full-access token | A fine-grained token scoped to the owner | Blast radius: a leak should expose TRACE's repos, not everything the account can reach |
+| Computing PM / task suggestions during `evaluate_project` and storing them | On-demand suggestion jobs, never stored | Stale by the time a person reads them, and CORE forbids persisting suggestions (§2) |
+| An AI call on every Gantt re-plan | Deterministic re-plan; AI only when `project_doc` changes | Status changes move dates, not scope; paying the model to do arithmetic adds cost and failure modes |
 | Member removal from a project; resend-invitation action | Not built | Decided by the user 2026-09-26: an educational project does not need every case. Members stay once assigned; re-assigning a task re-invites. Do not re-propose without a user request |
 
 ---
@@ -212,6 +226,7 @@ short — a decision, and the reason it was not the obvious choice.
 | 2026-09-26 | Phase 0–3a pendings closed | First contact with real GitHub (org `trace-bipasha-bagchi`): the token authenticated, but the organization **refused fine-grained tokens valid for more than 366 days** (403) — something no fake models; README and CORE now say so. The user recreated the org as `trace-organization`. Built repo archiving on project delete. Removed Phase 0 leftovers the sweep had missed: `core/geolocation.py` and `services/attendance_service.py` (clock-in/out only, imported but unused), their exceptions and schemas, and the unused `layouts/DashboardLayout.jsx` / `Header.jsx`. The demo seed uses `GITHUB_OWNER/trace-platform` (created by hand). Member removal and resend-invitation rejected (§4). Finally an opt-in live test (`tests/test_github_live.py`, `TRACE_LIVE_GITHUB=1`) ran TRACE's real code path end to end against the new org and passed first time — the fake's model of repo creation, the clash 422, commits, issue assignment and archiving holds |
 | 2026-09-26 | CI/CD completion removed | User decision. Built pieces undone: `may_set_status` now lets the assignee set In Review / Completed (`completed_by='Assignee'`), `cicd_events` dropped by revision `c4e1d2a7f9b3` (the table was empty — checked before dropping), the CI/CD text left the issue body, task page, landing page and Configuration. Non-obvious: `completed_by` is decided by *who the caller is to the task*, not their project role — a PM completing their own task is recorded as `Assignee`. Phase 6 kept as a visible gap rather than renumbering |
 | 2026-09-26 | Phase 4 execution | Tree and Gantt built. Found: (a) `task_groups` has no dependency column, and the AI's `depends_on` (CORE §3 step 5) had nowhere to be stored — the builder takes dependency pairs as an argument and Phase 5 decides whether they need a column; (b) the demo seed's task groups had no planned dates, so the seed now sets them and writes Gantt v1 with two dependencies — the local DB's project 1 got the same through a one-off script; (c) project routes can't use the data-free role matrix, so `test_visualisation.py` carries its own project-scoped one. Not browser-tested (user decision) — the build passes and the API is covered |
+| 2026-09-26 | Phase 5 execution | AI pipeline built: service layer, Evaluate Project (steps 1–6, 9), on-demand suggestions (7–8), task progress docs, `reevaluate_gantt` with its four triggers, weekly roll-up, re-based scoring, `mark_overdue_tasks` (replacing `mark_delayed_tasks`, which wrote a status that no longer exists). Decisions in §2. Found: (a) every Celery task runs `asyncio` on a fresh loop, so the app's pooled engine can't be shared — jobs use `jobs.job_session()` (`NullPool`); (b) `llm_chat_task` read `OPENAI_*` straight from Settings — now through `resolve_setting`; (c) the unknown-group convention on `…/task-groups/{gid}` routes is 422 (the shared lookup), kept for `suggest-tasks`. Tested entirely against fakes: **no real model call has been made yet**, and nothing was browser-checked. Three Alembic revisions (`d1a2b3c4e5f6`, `e2b3c4d5f6a7`, `f3c4d5e6a7b8`), all additive |
 
 ---
 
@@ -230,7 +245,7 @@ reasoning behind a decision remains visible.
 | Q4 | Existing Tier-1 AI features | Assumed |
 | Q5 | Group chat vs per-task discussion | Assumed |
 | Q6 | GitHub repo & branch strategy | ✅ Answered 2026-09-26 (repo); branching still deferred |
-| Q7 | Admin → Reports contents | **Blocked — needs an answer** |
+| Q7 | Admin → Reports contents | ✅ Answered 2026-09-26 — a dashboard download, no Reports page (format assumed) |
 | Q8 | Member roster vs task assignment | Assumed |
 | Q9 | GitHub account mapping | Assumed |
 | Q10 | Who approves leaves | Assumed |
@@ -298,7 +313,23 @@ branch. Per-task or per-feature branching is still **deferred**.
 **Open for later discussion:** a branch per task named from the issue id; monorepo
 projects sharing one repository.
 
-### Q7 — What goes in Admin → Reports? *(blocking for that screen only)*
+### Q7 — What goes in Admin → Reports? ✅ **Answered 2026-09-26**
+
+**Answer (user):** no separate or scheduled report. The project / task tree is
+**downloaded as a report, with date selection, from the dashboard itself**. The
+Admin → Reports page and the weekly report email (`send_weekly_report`) go.
+
+**Assumptions in force until confirmed** (Phase 8 step 5):
+- **Where:** the Manager dashboard (all their projects, or the selected one) and the
+  Employee dashboard (the projects they are on). The Admin panel has no dashboard,
+  so no Admin download.
+- **Date range:** a task is in the report if it was created, due or completed inside
+  the range; each row shows its status today, its dates and its assignee, grouped
+  project → task group → task, with per-group completion.
+- **Format:** one file per download — **CSV** (opens in any spreadsheet). PDF or
+  Excel only if asked.
+
+*Original question, kept for context:*
 Noted as "to be discussed". Three candidates were named:
 
 | Report | Audience | Open question |
@@ -307,7 +338,7 @@ Noted as "to be discussed". Three candidates were named:
 | Employee performance report | Admin | Which metrics? Task signals feed scoring today; attendance is recorded but deliberately excluded — should the report use it? |
 | Progress report by time interval | Manager, Admin | An interval picker over `gantt_charts` history and task status changes |
 
-**Assumption:** `/admin/reports` ships as a **placeholder**. Nothing else depends on it.
+~~**Assumption:** `/admin/reports` ships as a **placeholder**.~~ Superseded by the answer above.
 
 ### Q8 — How does someone become a project Member?
 The Manager assigns Project Managers; nothing says how Members join.

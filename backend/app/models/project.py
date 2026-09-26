@@ -59,6 +59,8 @@ class Project(BaseModelMixin, Base):
     last_evaluated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # {job name: {message, at}} — a failed AI job's reason, cleared by its next success (CORE.md §2.1)
+    ai_errors: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     # ── Relationships ─────────────────────────────────────────────
     created_by: Mapped["User"] = relationship(
@@ -177,6 +179,8 @@ class TaskGroup(BaseModelMixin, Base):
     created_by: Mapped[str] = mapped_column(
         String(20), default="Human", nullable=False
     )  # AI | Human
+    # ids of the task groups this one waits for (CORE.md §5.1)
+    depends_on: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
     # ── Relationships ─────────────────────────────────────────────
     project: Mapped[Project] = relationship("Project", back_populates="task_groups")
@@ -206,6 +210,7 @@ class GanttChart(BaseModelMixin, Base):
     generated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    generated_by_job: Mapped[str | None] = mapped_column(String(64), nullable=True)  # Celery job id
 
     # ── Relationships ─────────────────────────────────────────────
     project: Mapped[Project] = relationship("Project", back_populates="gantt_charts")

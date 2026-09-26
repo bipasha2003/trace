@@ -87,7 +87,7 @@ A task is not complete until the docs describe what the code now does.
 | Object storage | MinIO — project source files |
 | Document storage | GitHub repo files — all generated markdown |
 | Mail | Mailpit SMTP |
-| AI | OpenAI SDK; model and credentials from `system_settings`, `.env` fallback |
+| AI | OpenAI SDK; model and credentials fixed in `.env` — never Admin-configurable |
 | Auth | JWT access token in `localStorage` |
 
 ---
@@ -96,7 +96,7 @@ A task is not complete until the docs describe what the code now does.
 
 Base URL `http://localhost:8000/api/v1`, proxied by Vite.
 
-### Built (Phases 3, 3a, 4)
+### Built (Phases 3, 3a, 4, 5)
 
 Platform role on the route, then the caller's project role from
 `app/core/project_access.py` — never re-derived inline.
@@ -133,7 +133,21 @@ POST   /admin/settings/github/test           { ok, checks: [Token, Organization]
 GET    /projects/{id}/tree                   project → groups → tasks → assignees, live (anyone who sees the project)
 GET    /projects/{id}/gantt                  latest version, or ?version=N; null before the first (same)
 GET    /projects/{id}/gantt/versions         version history, newest first (same)
+POST   /projects/{id}/gantt/reevaluate       re-plan now → { job_id } (PM)
+POST   /projects/{id}/evaluate               Evaluate Project → { job_id } (owner); 409 while running,
+                                             without source text, or once tasks exist; 503 without AI / GitHub
+GET    /projects/{id}/evaluate/status        { state: idle|running|failed, error, … } (anyone who sees it)
+POST   /projects/{id}/suggest-managers       AI-ranked PM candidates → { job_id } (owner)
+POST   /projects/{id}/tasks/suggest-assignees  { title, description } → { job_id } (PM)
+POST   /projects/{id}/task-groups/{gid}/suggest-tasks  → { job_id } (PM)
+POST   /projects/{id}/progress-report        rewrite progress doc + report now → { job_id } (owner or PM)
+GET    /projects/{id}/documents/{kind}       initial|doc|progress|report → { url, content } from the repo
+PUT    /projects/{id}/documents/doc          save project_doc (PM) → { changed }; a change re-plans the Gantt
+GET    /tasks/{id}/progress-doc              the task's plan + checklist → { url, content }
 ```
+
+Every `{ job_id }` is polled at `GET /services/task/{job_id}/result`; for the
+suggestion routes that result *is* the answer (nothing is stored).
 
 ### To build
 
@@ -141,15 +155,8 @@ GET    /projects/{id}/gantt/versions         version history, newest first (same
 |--------|--------|---------|
 | Discussions | `/tasks/{id}/discussions` | Per-task threads |
 | Notifications | `/notifications` | List, mark read, unread count |
-| Settings | `/admin/settings/{mail,ai}` | The other Configuration sections + connection tests (GitHub is built) |
-
-```
-POST  /projects/{id}/evaluate                enqueue evaluate_project
-GET   /projects/{id}/evaluate/status         job state
-GET   /projects/{id}/suggest-managers        AI-ranked PM candidates
-PUT   /projects/{id}/doc                     edit project_doc → triggers re-eval
-GET   /projects/{id}/tasks/suggest-assignees AI-ranked Members
-```
+| Settings | `/admin/settings/mail` | The Mail Configuration section + connection test (GitHub is built). **No `/admin/settings/ai`** — the LLM configuration is fixed in `.env` |
+| Reports | `/projects/report` (name to be decided) | Dashboard download: project → group → task tree for a date range (PLANNING.md Q7). No Admin → Reports page |
 
 ### Keep
 
@@ -188,7 +195,9 @@ frontend/src/
   components/
     ui/                    ← shadcn-generated, NEVER hand-edit (Base UI: `render`, not `asChild`)
     ProjectSelector.jsx    ← topbar selector; the URL is the selected project
-    project/               ← ProjectOverview · TaskBoard · TeamPanel · status badges · NotYetAvailable
+    project/               ← ProjectOverview · EvaluationCard · TaskBoard · TeamPanel · PeopleSuggestions ·
+                              ProgressReport · ProjectDocEditor · status badges · NotYetAvailable
+    Markdown.jsx           ← react-markdown + remark-gfm, token-styled; every generated document
     ProjectTreeGraph.jsx   ← @xyflow/react, base.css only; nodes styled with tokens
     GanttChart.jsx         ← hand-built (divs + SVG), renders chart_data only
     NotificationBell.jsx
@@ -202,6 +211,7 @@ frontend/src/
     AuthContext.jsx        ← JWT + platform role
     ThemeContext.jsx
   lib/project.js           ← apiError, formatDate, isOverdue, statusTone (status → token colour) …
+  lib/jobs.js              ← waitForJob(job_id) — the enqueue-and-poll loop for every AI action
   api/                     ← one module per backend router
 ```
 
@@ -213,7 +223,16 @@ frontend/src/
 - Every LLM call is a Celery task. A route enqueues and returns a job id; it never
   awaits the model.
 - Every LLM response is validated against a declared JSON schema. Retry on parse
-  failure; never persist unvalidated output.
+  failure; never persist unvalidated output. **The one way to call the model is
+  `ai_service.complete(ai, Schema, system, user, context=…)`** with a schema from
+  `app/schemas/ai.py`; rules needing data (valid ids) are validators reading
+  `context`. Job bodies live in `app/services/ai_jobs.py` as `run_*(db, …, job_id,
+  ai, github)`; `app/tasks.py` only wraps them (own `NullPool` session via
+  `jobs.job_session()`). Enqueue with `jobs.enqueue(name, *args)` **after** the
+  commit — never `.delay()` from a route. A job that writes records its failure
+  (`set_ai_error` / `progress_doc_error`). Tests: `fake_ai` scripts replies per
+  schema name, `jobs_sent` (autouse) records every enqueue, and `conftest.py` pins
+  an empty `OPENAI_API_KEY` — no test reaches a model, Redis or a worker.
 - Authorisation is two-layer: platform role on the route, then project role via
   `project_assignments`. Never rely on the frontend to hide a capability.
   **Every new route declares a guard** (`require_admin`, `require_roles(...)` or
@@ -238,6 +257,8 @@ frontend/src/
   validates `chart_data` against `GanttChartData` (`app/schemas/gantt.py`,
   [`docs/CORE.md`](docs/CORE.md) §5.1) and appends a new version — never an update.
   The renderer reads nothing but `chart_data`, so every field it shows must be in it.
+  Anything that should move the chart calls `gantt_service.request_reevaluation()`
+  (after committing) — it debounces; never write a version from a request.
 - A task and its GitHub issue change together or not at all: call GitHub *before*
   committing, and roll back explicitly if it fails.
 - Responses tell the UI what the caller may do (`can_edit`, `allowed_statuses`),

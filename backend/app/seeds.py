@@ -384,11 +384,12 @@ async def seed_demo_project(db: AsyncSession) -> None:
         db.add(task)
 
     await db.flush()
-    # A hand-written Gantt v1 until Phase 5 generates them (DEVELOPMENT.md Phase 4):
-    # the AI pipeline depends on both the backend and the frontend groups.
+    # A hand-planned Gantt v1, so the demo has a chart without running the AI:
+    # the AI pipeline waits for both the backend and the frontend groups.
     from app.services import gantt_service
     backend, frontend, ai = group_ids
-    await gantt_service.snapshot(db, project, "initial", dependencies=[(backend, ai), (frontend, ai)])
+    (await db.get(TaskGroup, ai)).depends_on = [backend, frontend]
+    await gantt_service.snapshot(db, project, "initial")
     print(f"  ✅ Demo project: '{project.name}' (id={project.id})")
 
 

@@ -57,6 +57,7 @@ class Task(BaseModelMixin, Base):
         BigInteger, ForeignKey("task_groups.id"), nullable=True
     )
     task_progress_doc: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    progress_doc_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     assigned_to_user_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("users.id"), nullable=True
     )
