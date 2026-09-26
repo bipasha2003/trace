@@ -60,8 +60,8 @@ suggests and reports; it never decides that work is done (§7).
    document version or a Gantt version. The AI never changes a task's status.
 5. **AI credentials and model come from `.env`** (`OPENAI_API_KEY`, `OPENAI_MODEL`,
    `OPENAI_BASE_URL`) and are fixed there — no Admin can change them (decided
-   2026-09-26; until Phase 8 the code still also checks `system_settings`, which
-   holds no `ai.*` rows). *Originally:* from `system_settings` (Admin → Configuration)
+   2026-09-26; since Phase 8 `ai_service` reads `Settings` only, and `ai.*` is not a
+   `system_settings` category). *Originally:* from `system_settings` (Admin → Configuration)
    with `.env` as fallback. Never hardcode a model name at a call site.
 6. **Failures are visible.** A failed evaluation puts the project or task into a
    visible error state naming the reason. It must never leave stale data looking fresh.
@@ -70,7 +70,7 @@ suggests and reports; it never decides that work is done (§7).
 
 | Piece | Where | Rule |
 |-------|-------|------|
-| Model call | `app/services/ai_service.py` — `AIClient.chat_json()` | OpenAI SDK, JSON mode. Key, model and base URL from `.env` (rule 5; Phase 8 drops the `resolve_setting` detour). No key → the route refuses with 503 *before* enqueuing |
+| Model call | `app/services/ai_service.py` — `AIClient.chat_json()` | OpenAI SDK, JSON mode. Key, model and base URL from `.env` only (rule 5, `client_from_settings()`). No key → the route refuses with 503 *before* enqueuing |
 | Validation | `ai_service.complete(ai, Schema, system, user, context=…)` | The reply is parsed into a Pydantic model from `app/schemas/ai.py`. On a parse or validation error the errors go back to the model and it is asked again — **2 retries**, then `AIOutputInvalid`. Rules that need data (e.g. "every `user_id` is a candidate") are validators reading the validation `context`, so they retry too |
 | Queue | `app/services/jobs.py` — `enqueue(name, *args)` | Routes and services enqueue by task name **after** committing. Tests replace `enqueue` with a recorder (autouse) — no test reaches Redis or a worker. Job bodies are plain `async def run_*(db, …, ai=…, github=…)` functions in `app/services/ai_jobs.py`; `app/tasks.py` only opens a session (its own engine, `NullPool` — every Celery task runs on a fresh event loop) and calls them |
 | Attribution | commit messages, `gantt_charts.generated_by_job` | Every document commit says `(<job name> <job id>)`; every Gantt version stores the job id that wrote it |

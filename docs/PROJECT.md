@@ -127,7 +127,7 @@ Panels are fully separated by base route. There is no shared shell across roles.
 | Menu | Route | Contents |
 |------|-------|----------|
 | **Control Panel** | `/admin/control-panel` | Generic CRUD over every table **except `system_settings`**, which holds encrypted secrets and is served only by Configuration. Raw and table-driven — the escape hatch, not the daily UI. |
-| **Workforce** | `/admin/workforce` | Curated UI over the whole workforce record set: employees, managers, leaves, holidays, attendance, work shifts, departments, designations. Every tab has CRUD **and bulk upload** (CSV/JSON). The same tables appear in Control Panel; this is the human view. |
+| **Workforce** | `/admin/workforce` | Curated UI over the whole workforce record set: employees, managers, leaves, holidays, attendance, work shifts, departments, designations. Every tab has CRUD **and bulk upload** (CSV). The same tables appear in Control Panel; this is the human view. |
 | **Monitor** | `/admin/monitor` | Server and service health: API, PostgreSQL, Redis, Celery worker, Celery beat, MinIO, Mailpit, WebSocket, LLM reachability, recent Celery job outcomes. |
 | **Configuration** | `/admin/configuration` | Runtime settings in the database, not only `.env`: mail/SMTP and GitHub (the company's owner + token — [`CORE.md`](CORE.md) §4.1). Per-section "test connection". **No AI section** — the LLM configuration is fixed in `.env` (user decision 2026-09-26); the model may be shown read-only. |
 | ~~**Reports**~~ | ~~`/admin/reports`~~ | **Removed** (Q7, 2026-09-26). Reports are a **Download report** action on the Manager and Employee dashboards — the project → task group → task tree for a date range ([`PLANNING.md`](PLANNING.md) Q7). No scheduled report. |
@@ -141,7 +141,10 @@ Panels are fully separated by base route. There is no shared shell across roles.
 ### 6.1 "All" selected (default)
 Combined dashboard across every project this Manager owns: project counts,
 aggregate progress, per-project progress, at-risk projects, recent activity, and a
-prominent **New Project** action.
+prominent **New Project** action, and **Download report** (Phase 8): a date range
+and "all my projects" or one → a CSV of project → task group → task, every task
+created, due or completed in the range, with its status today, assignee and group
+completion ([`PLANNING.md`](PLANNING.md) Q7).
 
 ### 6.2 A specific project selected
 Detailed single-project view: the tree graph, the Gantt chart, task group and task
@@ -168,7 +171,8 @@ What the panel offers depends on the Employee's role in the selected project.
 
 ### 7.1 "All" selected (either project role)
 Combined dashboard over every project they belong to: aggregate progress, their
-open tasks, due and overdue tasks, recent notifications.
+open tasks, due and overdue tasks, recent notifications — and the same **Download
+report** as the Manager, over the projects they are on.
 
 ### 7.2 A project selected — as **Project Manager**
 - Full project dashboard: tree graph, Gantt, task groups, task board
@@ -409,6 +413,16 @@ GitHub keys ([`CORE.md`](CORE.md) §4.1):
 | `github.api_url` | no | `GITHUB_API_URL` | `https://api.github.com`; GitHub Enterprise otherwise. Not on the Configuration screen |
 | `github.committer_name` / `github.committer_email` | no | `GITHUB_COMMITTER_NAME` / `_EMAIL` | Identity on the commits TRACE makes |
 
+Mail keys (Phase 8, `app/services/mail_service.py`, read afresh on every send):
+
+| Key | Secret | `.env` fallback | Purpose |
+|-----|--------|-----------------|---------|
+| `mail.host` / `mail.port` | no | `SMTP_HOST` / `SMTP_PORT` | The SMTP server (Mailpit locally) |
+| `mail.from_address` | no | `SMTP_FROM` | Sender of every notification email |
+| `mail.username` | no | — | Empty → no login |
+| `mail.password` | **yes** — encrypted, write-only | — | |
+| `mail.security` | no | — | `none` · `starttls` · `ssl` (default `none`) |
+
 ---
 
 ## 12. Changes to `tasks`
@@ -510,7 +524,7 @@ Stack constraints (shadcn/ui, Tailwind v4 tokens, `lucide-react` only) are in
 /admin/workforce          Employees · Managers · Leaves · Holidays ·
                           Attendance · Shifts · Departments & Designations
 /admin/monitor            Service & server health
-/admin/configuration      Mail · AI · GitHub settings
+/admin/configuration      GitHub · Mail settings; the AI shown read-only
 (no /admin/reports — reports are a dashboard download, PLANNING.md Q7)
 /admin/settings           Own profile
 
@@ -554,15 +568,14 @@ Control Panel   Database
 Workforce       Users
 Monitor         Activity
 Configuration   Settings2
-Reports         FileBarChart
 ```
 
 | Screen | Notes |
 |--------|-------|
 | **Control Panel** | Table picker grouped by category, then a generic data grid with create/edit/delete dialogs and filtering. Driven by the existing `MODEL_REGISTRY` pattern in `backend/app/api/v1/admin.py`. `system_settings` is deliberately not in it. |
-| **Workforce** | Tabs per §5. Purpose-built, not a raw grid: directory cards and search for people, an approve/reject queue for leaves, a calendar for holidays, a filterable log for attendance, a shift editor with employee assignment. Every tab has a **Bulk Upload** action (CSV/JSON) with a validation summary that reports rejected rows rather than failing silently. Attendance and shifts are Admin-maintained records — there is no clock-in control anywhere in the product. |
-| **Monitor** | `ServiceMonitor.jsx` promoted from a header overlay to a page. Health cards for API, PostgreSQL, Redis, Celery worker, Celery beat, MinIO, Mailpit, WebSocket and LLM, plus recent Celery job outcomes. |
-| **Configuration** | Sections for Mail/SMTP and GitHub — **no AI provider section** (fixed in `.env`). Secrets are write-only (masked, never returned), each section with "Test connection". Writes to `system_settings`. **GitHub is built (Phase 3a)** — organization, token (a password field showing only *Not set / Set here / Set in .env*; blank keeps it, "Clear saved token" falls back to `.env`), committer name and email. *Test connection* runs against the **saved** settings (disabled while there are unsaved edits) and reports two checks: token authenticates, organization visible. Repos are always public, so there is no visibility setting. Mail remains a Phase 8 placeholder; the AI placeholder card is removed in Phase 8. |
+| **Workforce** | Tabs per §5. Every tab has a **Bulk Upload** action with a validation summary that reports rejected rows rather than failing silently. Attendance and shifts are Admin-maintained records — there is no clock-in control anywhere in the product. *As built (Phase 8):* one generic table per tab, driven by the fields the server publishes (`GET /admin/workforce`, `app/services/workforce.py`): filter, Add / Edit dialog, Delete, **CSV template**, **Bulk upload** (UTF-8 CSV; references by employee code and by name; each row in its own savepoint; the result lists every rejected line with its reason). Leaves are approved by setting their status (Q10). Employees and Managers are real accounts (password on create); deleting one deactivates it, and is refused while an Employee holds open tasks or a Manager owns projects. A department, designation or shift still assigned to someone is not deleted. The richer views (leave queue, holiday calendar) were not built — deliberately, for scope. |
+| **Monitor** | `ServiceMonitor.jsx` promoted from a header overlay to a page. Health cards for API, PostgreSQL, Redis, Celery worker, Celery beat, MinIO, Mailpit, WebSocket and LLM, plus recent Celery job outcomes. *As built (Phase 8):* **Recent jobs** lists the last 30 finished jobs from the Redis result backend (`GET /services/jobs/recent`, `result_extended` on) — an AI job that returned `{status: failed}` shows as FAILED, not SUCCESS. |
+| **Configuration** | Sections for Mail/SMTP and GitHub — **no AI provider section** (fixed in `.env`). Secrets are write-only (masked, never returned), each section with "Test connection". Writes to `system_settings`. **GitHub is built (Phase 3a)** — organization, token (a password field showing only *Not set / Set here / Set in .env*; blank keeps it, "Clear saved token" falls back to `.env`), committer name and email. *Test connection* runs against the **saved** settings (disabled while there are unsaved edits) and reports two checks: token authenticates, organization visible. Repos are always public, so there is no visibility setting. *As built (Phase 8):* **Mail** — host, port, security (none / STARTTLS / SSL), username, write-only password, from address; *Test connection* connects and logs in, sends nothing. **AI** — a read-only card showing the model and endpoint from `.env`. |
 | ~~**Reports**~~ | Removed — see the dashboard **Download report** (Q7). |
 
 ## 19. Manager panel UI
@@ -706,14 +719,14 @@ chart can press **Re-plan now** to draw them.
 
 | Current file | Disposition |
 |--------------|-------------|
-| `pages/AttendancePage.jsx` | **Rebuild** as Admin → Workforce tabs. Clock-in/out controls, geolocation capture and the Manager HR view go; the attendance log, leave queue, holiday calendar and shift editor stay as Admin record-keeping |
+| `pages/AttendancePage.jsx` | **Deleted** (Phase 8) — rebuilt as Admin → Workforce tabs. Clock-in/out controls, geolocation capture and the Manager HR view go; the attendance log, leave queue, holiday calendar and shift editor stay as Admin record-keeping |
 | `pages/MasterPage.jsx` | **Delete** — dynamic roles, dynamic menus and the permission matrix are removed |
 | `pages/DashboardPage.jsx` | **Replace** with three panel dashboards |
 | `pages/TasksPage.jsx` | **Replace** — infinite tree, group chat and dispute queue give way to project / task-group / task views |
-| `pages/EmployeesPage.jsx` | **Move** into Admin → Workforce |
-| `pages/ProductivityPage.jsx` | **Delete** (Phase 8) — there is no Reports page to fold it into (Q7); scores are an AI input, not a headline page |
-| `pages/FilesPage.jsx` | **Delete as a menu** — uploads happen inside project creation; MinIO remains a backing service |
-| `pages/AdminPanelPage.jsx` | **Keep** — becomes Admin → Control Panel |
+| `pages/EmployeesPage.jsx` | **Deleted** (Phase 8) — replaced by Admin → Workforce |
+| `pages/ProductivityPage.jsx` | **Deleted** (Phase 8) — there is no Reports page to fold it into (Q7); scores are an AI input, not a headline page |
+| `pages/FilesPage.jsx` | **Deleted** (Phase 8) — uploads happen inside project creation; MinIO remains a backing service |
+| `pages/AdminPanelPage.jsx` | **Deleted** (Phase 8) — the unrouted copy of `admin/ControlPanelPage.jsx`. So were `SettingsPage.jsx`, `admin/ReportsPage.jsx` and the `hrms` / `attendance` / `employees` / `productivity` frontend API modules |
 | `components/ServiceMonitor.jsx` | **Keep** — becomes Admin → Monitor |
 | `layouts/Sidebar.jsx` | **Rewrite** as the Admin-only sidebar with a static item list |
 | `layouts/DashboardLayout.jsx` | **Split** into `AdminLayout`, `ManagerLayout`, `EmployeeLayout` |
@@ -798,20 +811,21 @@ chart can press **Re-plan now** to draw them.
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Control Panel — all-tables CRUD | ✅ | Extended to all new Phase-1 tables, except `system_settings` (removed in Phase 3a — secrets) |
-| Workforce — full record set | 🔄 | Exists split across pages; consolidate |
-| Bulk upload on every Workforce tab | 🔄 | `/hrms/bulk-upload` exists; extend + report rejected rows |
-| Monitor page | ✅ | Promoted from header overlay to /admin/monitor full page |
-| Configuration via `system_settings` | 🔄 | Resolution (DB → `.env`), secret encryption and the **GitHub** section built (Phase 3a). Mail section in Phase 8. **No AI section** — LLM configuration fixed in `.env` |
-| Reports — dashboard download by date range | 🔲 | Phase 8 (Q7 answered 2026-09-26). Replaces the Admin → Reports page and the weekly report email, both ❌ |
+| Workforce — full record set | ✅ | Phase 8. `/admin/workforce/{tab}` — eight tabs, one generic page |
+| Bulk upload on every Workforce tab | ✅ | Phase 8. `POST /admin/workforce/{tab}/bulk` + `/template`; rejected rows reported by line. The old `/hrms/bulk-upload` (all-or-nothing, silent 500s) is removed |
+| Monitor page | ✅ | Promoted from header overlay to /admin/monitor full page; Phase 8: recent Celery jobs, Celery beat card, and the health cards fixed (they read the wrong response shape and always showed unhealthy) |
+| Configuration via `system_settings` | ✅ | GitHub (Phase 3a) and **Mail** (Phase 8, with connection test; `send_mail_task` resolves it per send). **No AI section** — `ai.*` removed from resolution; `ai_service` and `llm_chat_task` read `.env` only |
+| Reports — dashboard download by date range | ✅ | Phase 8. `GET /projects/report?start&end[&project_id]` → CSV; **Download report** on the Manager and Employee dashboards (Q7) |
+| Admin → Reports page, weekly report email | ❌ | Removed Phase 8: `/admin/reports`, `ReportsPage.jsx`, `send_weekly_report` + its Beat entry, `/reports/weekly-html` |
 
 ### Workforce (Admin-owned records)
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Employee directory, departments, designations | ✅ | Move under Workforce |
-| Leaves | 🔄 | Approval moves to Admin — Q10 |
-| Holidays | ✅ | |
-| Attendance **records** | 🔄 | Table retained; rebuilt as an Admin log. `GET /attendance/all` fixed — it crashed on columns that no longer exist |
-| Work shifts / schedules | 🔄 | Table retained; Admin-managed editor |
+| Employee directory, departments, designations | ✅ | Workforce tabs (Phase 8) |
+| Leaves | ✅ | Workforce tab; the Admin approves by setting the status (Q10) |
+| Holidays | ✅ | Workforce tab |
+| Attendance **records** | ✅ | Workforce tab — in / out times, hours computed. `GET /attendance/all` fixed earlier |
+| Work shifts / schedules | ✅ | Workforce tab; assigned on the employee's record |
 | Employee clock-in/out UI, geo-fencing | ❌ | Removed (routes, geolocation & UI cleared in Phase 0) |
 | Manager's attendance & HR panel | ❌ | Removed outright (cleared in Phase 0) |
 
@@ -857,7 +871,7 @@ chart can press **Re-plan now** to draw them.
 | AI execution | Celery only, structured JSON only | Keeps request handlers fast; makes verdicts queryable and auditable |
 | AI authority | Suggests people, never assigns them | Keeps a human accountable for assignment |
 | Role model | Three hardcoded platform roles + per-project roles | Panel separation replaces the dynamic permission matrix |
-| Runtime config | `system_settings` table, `.env` fallback | Admin changes mail/AI credentials without a redeploy |
+| Runtime config | `system_settings` table, `.env` fallback | Admin changes mail and GitHub credentials without a redeploy; the AI stays fixed in `.env` |
 | Workforce data | Retained, Admin-owned | Planning needs availability; the HR *interfaces* were the problem, not the data |
 
 ## 26. Service URLs

@@ -96,7 +96,7 @@ A task is not complete until the docs describe what the code now does.
 
 Base URL `http://localhost:8000/api/v1`, proxied by Vite.
 
-### Built (Phases 3, 3a, 4, 5, 7)
+### Built (Phases 3, 3a, 4, 5, 7, 8)
 
 Platform role on the route, then the caller's project role from
 `app/core/project_access.py` — never re-derived inline.
@@ -151,6 +151,16 @@ PATCH  /notifications/{id}/read              mine only (else 404)
 POST   /notifications/read-all               { updated }
 WS     /ws?token=<access token>              live "refetch" events: notification · discussion {task_id}
 GET    /services/ws/status                   sockets open on this API process (Admin)
+GET    /projects/report?start&end[&project_id]  CSV: project → group → task, created/due/completed in range
+                                             (Manager, Employee — their visible projects; Admin 403)
+GET|PUT /admin/settings/mail                 SMTP host, port, security, username, from; password write-only (Admin)
+POST   /admin/settings/mail/test             { ok, checks: [Server, Login] } — connects, sends nothing (Admin)
+GET    /admin/workforce                      the tabs and their fields (Admin)
+GET|POST        /admin/workforce/{tab}       list · add — tab: employees managers leaves holidays attendance
+PUT|DELETE      /admin/workforce/{tab}/{id}  shifts departments designations (Admin)
+GET    /admin/workforce/{tab}/template       empty CSV with the tab's columns
+POST   /admin/workforce/{tab}/bulk           CSV → { created, rejected: [{line, error}], ignored_columns }
+GET    /services/jobs/recent                 last finished Celery jobs, failed AI results as FAILED (Admin)
 ```
 
 Every `{ job_id }` is polled at `GET /services/task/{job_id}/result`; for the
@@ -158,10 +168,8 @@ suggestion routes that result *is* the answer (nothing is stored).
 
 ### To build
 
-| Module | Prefix | Purpose |
-|--------|--------|---------|
-| Settings | `/admin/settings/mail` | The Mail Configuration section + connection test (GitHub is built). **No `/admin/settings/ai`** — the LLM configuration is fixed in `.env` |
-| Reports | `/projects/report` (name to be decided) | Dashboard download: project → group → task tree for a date range (PLANNING.md Q7). No Admin → Reports page |
+Nothing API-side is outstanding after Phase 8. There is deliberately **no
+`/admin/settings/ai`** — the LLM configuration is fixed in `.env`.
 
 ### Keep
 
@@ -170,7 +178,7 @@ suggestion routes that result *is* the answer (nothing is stored).
 | Auth | `/auth` | `api/v1/auth.py` — `register` is public but only ever creates an `Employee`; Admin / Manager accounts need an Admin token |
 | Users | `/users` | `api/v1/users.py` |
 | Employees + designations | `/employees` | `api/v1/employees.py` |
-| HRMS (leaves, holidays, bulk upload) | `/hrms` | `api/v1/hrms.py` |
+| HRMS (leaves, holidays, shifts) | `/hrms` | `api/v1/hrms.py` — the UI uses `/admin/workforce` now; bulk upload moved there |
 | Attendance + shifts **records** (Admin) | `/attendance`, `/hrms` | Re-homed under Workforce |
 | Admin all-tables CRUD | `/admin/tables` | `api/v1/admin.py` — every table **except `system_settings`** (secrets; served by `api/v1/settings.py`) |
 | Services / health / WS / MinIO / mail / LLM | `/services` | `api/v1/services.py` — Admin-only, except `/services/task/{id}/result`, which any signed-in role may poll |
@@ -184,6 +192,7 @@ suggestion routes that result *is* the answer (nothing is stored).
 | `/tasks/groups/*`, `/services/ws/chat` | Group chat replaced by discussions (the chat socket went in Phase 7) |
 | `/tasks/tree/hierarchy`, `/tasks/{id}/evaluate-tree` | Infinite tree removed |
 | `/tasks/disputes*`, `/tasks/overallocations` | Deferred |
+| `/hrms/bulk-upload`, `/reports/weekly-html`, the `send_weekly_report` job | Removed in Phase 8 — Workforce bulk upload reports rejected rows; reports are the dashboard CSV (PLANNING.md Q7) |
 | `/webhooks/cicd` | Never built — CI/CD-driven completion was removed from the design (2026-09-26) |
 | Legacy `/tasks` CRUD, `/tasks/{id}/push-github`, `/verify-commit`, timers, comments | Removed in Phase 3: generic `PATCH` let anyone complete a task; push-github faked URLs. Replaced by the routes above; discussions return in Phase 7 |
 
@@ -201,7 +210,7 @@ frontend/src/
     ui/                    ← shadcn-generated, NEVER hand-edit (Base UI: `render`, not `asChild`)
     ProjectSelector.jsx    ← topbar selector; the URL is the selected project
     project/               ← ProjectOverview · EvaluationCard · TaskBoard · TeamPanel · PeopleSuggestions ·
-                              ProgressReport · ProjectDocEditor · TaskDiscussion · status badges · NotYetAvailable
+                              ProgressReport · ProjectDocEditor · TaskDiscussion · ReportDownload · status badges · NotYetAvailable
     Markdown.jsx           ← react-markdown + remark-gfm, token-styled; every generated document
     ProjectTreeGraph.jsx   ← @xyflow/react, base.css only; nodes styled with tokens
     GanttChart.jsx         ← hand-built (divs + SVG), renders chart_data only
@@ -209,7 +218,7 @@ frontend/src/
     ServiceMonitor.jsx
   pages/
     LandingPage.jsx · LoginPage.jsx · ForbiddenPage.jsx
-    admin/    ControlPanelPage · WorkforcePage · MonitorPage · ConfigurationPage · ReportsPage
+    admin/    ControlPanelPage · WorkforcePage (generic, field-driven) · MonitorPage · ConfigurationPage
     manager/  ManagerDashboardPage · ProjectCreatePage · ProjectDetailPage
     employee/ EmployeeDashboardPage · ProjectDetailPage · TaskDetailPage (also /manager/tasks/:id)
   contexts/
@@ -245,6 +254,13 @@ frontend/src/
   hand. Live events go through `realtime.publish(user_ids, event)` and carry no data —
   the browser refetches over REST, so authorisation stays in the routes. Tests:
   `events_sent` (autouse) records every publish.
+- **Mail** goes through `send_mail_task` → `mail_service.send(await mail_config(db), …)`;
+  the SMTP server is resolved per send (Configuration, then `.env`). The **AI** is
+  never in `system_settings`: `ai_service.client_from_settings()` reads `Settings`.
+- **Workforce** tabs are declared once in `app/services/workforce.py` (`ENTITIES`:
+  fields + list/create/update/delete). Add a tab or a field there — the page, the
+  CSV template and bulk-upload validation follow. References are by human key
+  (employee code, a name), never a database id.
 - Authorisation is two-layer: platform role on the route, then project role via
   `project_assignments`. Never rely on the frontend to hide a capability.
   **Every new route declares a guard** (`require_admin`, `require_roles(...)` or

@@ -177,6 +177,9 @@ do_start() {
 
     # Cleanup function on Ctrl+C or EXIT in foreground
     cleanup_fg() {
+        # Clear the traps first: `kill 0` below signals this shell too, and a trap
+        # still set would re-enter cleanup_fg until the shell crashed.
+        trap - EXIT INT TERM
         echo ""
         echo -e "${YELLOW}⏹  Shutting down TRACE local processes...${NC}"
         if [ -f "$PID_FILE" ]; then
@@ -295,10 +298,23 @@ do_stop() {
         rm -f "$PID_FILE"
     fi
 
-    # 2. Kill any matching background uvicorn/celery/vite processes
-    pkill -f "uvicorn app.main:app" 2>/dev/null || true
-    pkill -f "celery -A app.celery_app" 2>/dev/null || true
-    pkill -f "vite" 2>/dev/null || true
+    # 2. Kill any matching background uvicorn/celery/vite processes — politely, then
+    #    for real: a hung uvicorn reloader ignores TERM and keeps port 8000, so the
+    #    next start fails with "Address already in use".
+    local patterns=("uvicorn app.main:app" "celery -A app.celery_app" "vite")
+    for pat in "${patterns[@]}"; do pkill -f "$pat" 2>/dev/null || true; done
+    for _ in $(seq 1 20); do
+        local alive=0
+        for pat in "${patterns[@]}"; do pgrep -f "$pat" > /dev/null && alive=1; done
+        [ "$alive" = 0 ] && break
+        sleep 0.5
+    done
+    for pat in "${patterns[@]}"; do
+        if pgrep -f "$pat" > /dev/null; then
+            echo -e "${YELLOW}⚠️  '$pat' ignored TERM — killing it${NC}"
+            pkill -9 -f "$pat" 2>/dev/null || true
+        fi
+    done
 
     # 3. Stop Docker Containers
     echo -e "${CYAN}🐳 Stopping Docker containers...${NC}"

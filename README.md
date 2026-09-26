@@ -98,9 +98,19 @@ backend derives its connection from it. Redis is on 6379.
 Copy `.env.example` to `.env` at the repo root. It is the **only** env file:
 Docker Compose, `start.sh`, the backend and the Vite config all read it. The backend
 derives its database, Redis, MinIO and SMTP connections from the same keys Docker
-Compose uses, so no value is written twice. GitHub settings are changed in the app
-under **Admin → Configuration** — no redeploy needed; the Mail section is still to
-come, so mail comes from `.env` for now. The AI settings always come from `.env`.
+Compose uses, so no value is written twice. GitHub and mail (SMTP) settings are
+changed in the app under **Admin → Configuration** — no redeploy needed; empty mail
+fields fall back to `.env` (`SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM` — Mailpit
+locally). The AI settings always come from `.env` and are only shown there.
+
+### Workforce and reports
+
+**Admin → Workforce** keeps the employee, manager, leave, holiday, attendance, shift,
+department and designation records. Each tab has a **CSV template** and **Bulk
+upload**: good rows are added and every rejected row is listed with its line number
+and reason. Managers and Employees download a **report** from their dashboard — a
+CSV of project → task group → task for a chosen date range. There is no scheduled
+report email.
 
 ### GitHub
 
@@ -144,7 +154,9 @@ never deleted, so its name stays taken).
 The AI evaluates projects, plans task groups and the Gantt chart, suggests people
 and tasks, and writes the progress documents (`docs/CORE.md`). It uses any
 OpenAI-compatible API: set `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-4o-mini`)
-and, for another provider, `OPENAI_BASE_URL` in `.env`. They are fixed there on
+and, for another provider, `OPENAI_BASE_URL` in `.env`. For **Gemini**, use the
+Gemini key with `OPENAI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/`
+and `OPENAI_MODEL=gemini-3.5-flash-lite`. Restart (`./start.sh restart`) after changing them. They are fixed there on
 purpose — no Admin screen changes them. Every AI action
 runs on the **Celery worker** (`./start.sh start` runs it); without one, *Evaluate
 project* stays at "Evaluating…". The generated documents are committed to the

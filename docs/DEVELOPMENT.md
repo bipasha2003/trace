@@ -21,14 +21,15 @@
 | 3a · GitHub owner model | ✅ built, tested, and verified against real GitHub (opt-in live test) |
 | 4 · Visualisation | ✅ built and tested; not browser-checked (user decision) |
 | 5 · The AI pipeline | ✅ built and tested against a fake model — **never run against a real model yet**; not browser-checked |
-| **7 · Notifications & discussion** | 🔲 **next** — read *Starting Phase 7* below |
-| 8 – 9 | 🔲 not started. Phase 8 may run in parallel |
+| 7 · Notifications & discussion | ✅ built and tested; not browser-checked |
+| 8 · Admin completion | ✅ built and tested; not browser-checked |
+| **9 · Polish** | 🔲 **next** — read *Starting Phase 9* below |
 | ~~6 · CI/CD-driven completion~~ | ❌ **removed** 2026-09-26 — the assignee marks their own task complete ([`CORE.md`](CORE.md) §7) |
 
 **Verify before you trust this table** — facts that change outside the docs:
 - `git log --oneline -5` and `git status` — what is committed; untracked files are
   how Phase 2 once went missing from `main`.
-- `cd backend && .venv/bin/python -m pytest -q` — 374 passing and 2 skipped at handoff (the skips are the opt-in live GitHub test). The suite
+- `cd backend && .venv/bin/python -m pytest -q` — 445 passing and 2 skipped at handoff (the skips are the opt-in live GitHub test). The suite
   uses its own `trace_test` database (built by Alembic) and fakes GitHub and MinIO,
   so it is safe to run anywhere — but it needs the Compose `db` **and** `redis`
   services up (`docker compose up -d db redis`); without Redis three job-poll tests
@@ -62,6 +63,11 @@
   Celery worker running (`./start.sh start` runs it) or the project sits in
   `Evaluating`; there is no automatic recovery from a dead worker — reset the status
   by hand in the Control Panel.
+- **Browser errors on every call with the stack "running"** usually mean a hung
+  uvicorn reloader: its worker died (a zombie) but it still holds port 8000, so
+  requests queue and never answer. `ss -ltnp | grep 8000` shows it. `./start.sh stop`
+  now escalates to SIGKILL for anything that ignores TERM (fixed 2026-09-27, along
+  with `cleanup_fg` recursing on its own `kill 0` until the shell crashed).
 - Only the Admin can create Admin / Manager accounts. Production does not seed demo
   users, and refuses to start while any seeded account still has its published
   password — change them with `./start.sh set-password <email>` (README → Production).
@@ -79,32 +85,37 @@
   behind (the token cannot delete). Rare; clean up by hand.
 - There is no delete-project button — `DELETE /projects/{id}` is API-only.
 
-*Owned by later phases, not gaps in 0–3a:*
-- `components/ServiceMonitor.jsx` links to Mailpit / MinIO / pgAdmin at `localhost` — Phase 8.
-- `mark_overdue_tasks` flips tasks to `Overdue` but sends no notification — Phase 7.
-  Moving a task's due date later does not clear `Overdue`; the PM sets a status.
+*Smaller gaps, left for Phase 9's revision sweep or later:*
+- `components/ServiceMonitor.jsx` (the header overlay) links to Mailpit / MinIO /
+  pgAdmin at `localhost`.
+- Moving a task's due date later does not clear `Overdue`; the PM sets a status.
 - The task progress document is written once; its checklist is not ticked off as
-  work moves (`CORE.md` §4). AI settings come from `.env` only and will stay there —
-  Phase 8 removes the `ai.*` rows from `system_settings` resolution.
-- Old pages `AttendancePage`, `EmployeesPage`, `ProductivityPage`, `AdminPanelPage`,
-  `FilesPage`, `SettingsPage` are unrouted; Phase 8 rebuilds or deletes them.
+  work moves (`CORE.md` §4).
+- Any `ai.*` rows an older database still has in `system_settings` are ignored now
+  (the AI reads `.env` only); they can be deleted by hand.
+- The legacy `/hrms/*`, `/employees`, `/attendance`, `/productivity`, `/reports/*`
+  JSON routes still exist, Admin-only, with no UI — Workforce uses `/admin/workforce`.
+- Live events need Redis; if the API's subscriber drops it retries every 5 s, and the
+  bell catches up on the next page load.
 
 *Not planned* (user decision, `PLANNING.md` §4): removing Members from a project,
 a resend-invitation action. Don't build them unasked.
 
-**Starting Phase 7** — what the phase text below does not tell you
-- **Notification hooks already exist as call sites.** `project_service.notify_assignment`
-  writes `notifications` rows on assignment; completion (`set_status`), the overdue
-  sweep (`project_service.mark_overdue_tasks`) and evaluation finishing
-  (`ai_jobs.run_evaluate_project`) are where the other CORE §9 events belong —
-  add them there, after the commit, like the Gantt trigger.
-- **Step 5 is half done:** `mark_overdue_tasks` exists and is scheduled; it still
-  needs its notifications. `task_due_reminders` is not built.
-- Enqueue background work with `jobs.enqueue(...)`, never `.delay()` — tests
-  replace it (`jobs_sent`), and a dev worker would otherwise run test messages
-  against the dev database.
-- Email already goes through `send_mail_task`, which reads SMTP straight from
-  Settings — Phase 8 moves mail to `resolve_setting` with the Configuration page.
+**Starting Phase 9** — what the phase text below does not tell you
+- **Never `with TestClient(app)` in a test.** The context manager runs the app's
+  startup, which seeds demo data and *commits* it into `trace_test`, breaking
+  `test_environment.py`. Use `TestClient(app)` without `with` (see
+  `test_notifications.py`). If it happens, drop the `trace_test` database — the next
+  run rebuilds it.
+- Test users from `admin_headers` & co. are only flushed: a request that errors
+  rolls them back. Commit first when a test expects an error mid-way (the `admin`
+  fixture in `test_admin_completion.py`).
+- Lists that need pagination (item 2): `/projects`, `/projects/{id}/tasks`,
+  `/tasks/mine`, `/admin/workforce/{tab}`, `/admin/tables/{t}`, `/notifications`
+  (already `?limit`). The Workforce page filters client-side today.
+- AI empty / error states (item 4) mostly exist: `EvaluationCard` (idle, running,
+  failed + `ai_errors`), `ProgressReport` / `ProjectDocEditor` (`NotYetAvailable`),
+  the task page (`progress_doc_error`). Item 4 is an audit, not a build.
 
 ---
 
@@ -292,7 +303,8 @@ An explicit guard list, because several of these look like collateral:
 - The workforce record set — `employees`, `employee_details`, `departments`,
   `designations`, `leaves`, `holidays`, `attendance`, `work_schedules` — tables,
   models **and** their read/CRUD endpoints
-- `/hrms/bulk-upload` — it is required by Phase 8 for every Workforce tab
+- `/hrms/bulk-upload` — it is required by Phase 8 for every Workforce tab *(Phase 8
+  replaced it with `/admin/workforce/{tab}/bulk` and removed it)*
 - Task Health Score columns and its two endpoints (0.6)
 - `api/v1/services.py` — health checks, MinIO, Mailpit, LLM, and the
   `/services/task/{id}/result` polling endpoint every AI action depends on
@@ -575,9 +587,20 @@ right people without anyone refreshing a page.
 
 ---
 
-## Phase 8 — Admin completion
+## Phase 8 — Admin completion ✅
 
-May run in parallel with Phases 4–7.
+**Status (2026-09-27):** built and tested (`tests/api/v1/test_admin_completion.py`);
+not browser-checked (user decision). No migration. (1) `mail_service` + `mail.*`
+settings, `/admin/settings/mail` + `/test`, `send_mail_task` resolves SMTP per send;
+`ai.*` gone from `system_settings`, `ai_service` / `llm_chat_task` read `.env`.
+(2) `/admin/workforce/{tab}` — eight tabs declared in `app/services/workforce.py`,
+one generic `WorkforcePage`, CSV template + bulk upload with rejected lines;
+`/hrms/bulk-upload` removed. (3) Control Panel already covered every table — no
+change. (4) Monitor: recent jobs (`/services/jobs/recent`, `result_extended`), a
+Beat card, and the cards' response-shape bug fixed. (5) `GET /projects/report` CSV
++ `ReportDownload` on both dashboards (Q7 assumptions confirmed by the user);
+`send_weekly_report`, its Beat entry, `/reports/weekly-html`, `/admin/reports` and
+`ReportsPage` removed; the six dead pages and four dead API modules deleted.
 
 1. The Configuration screen over `system_settings` — **mail** (GitHub already built
    in Phase 3a) — with write-only secrets and a connection test. **No AI section:**
@@ -595,7 +618,7 @@ May run in parallel with Phases 4–7.
    scheduled report: retire `send_weekly_report` and its Beat entry, and remove the
    Admin → Reports route. Instead the dashboards get **Download report** — the
    project → task group → task tree for a chosen date range, as a file. Scope and
-   format are assumptions in `PLANNING.md` Q7 — confirm them before building.
+   format were assumptions in `PLANNING.md` Q7 — confirmed 2026-09-27.
    `ProductivityPage.jsx` is deleted, not folded.
 
 **Done when:** an Admin can change the SMTP host without touching `.env` or
